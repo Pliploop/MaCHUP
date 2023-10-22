@@ -9,3 +9,5 @@ Ideas include
   - RFSQ
   - Parallel cross-attention with modality dropout
     
+
+todo: move to hydra for config
