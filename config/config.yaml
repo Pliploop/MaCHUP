@@ -40,25 +40,31 @@ trainer:
   sync_batchnorm: false
   reload_dataloaders_every_n_epochs: 0
   default_root_dir: null
-
-
-
-  
 model:
-  encodec: 
+  encodec:
     class_path: src.models.Encodec.Encodec
     init_args:
-      frozen: True
       sample_rate: 24000
-      model_bandwidth : 3
-  transformer_encoder:
-    class_path: src.models.Transformer.Encoder.TransformerEncoder
+      frozen: true
+      model_bandwidth: 3
+  encoder:
+    class_path: src.models.Transformer.Encoder.VanillaEncoder
     init_args:
       n_codebooks: 4
-      embedding_size: [512,256,128,64]
+      embedding_size:
+      - 512
+      - 256
+      - 128
+      - 64
       card: 1024
       embedding_behaviour: concat
-      position_encoder:
-        class_path: src.models.Transformer.Encoder.PositionalEncoding
-      encoder_kind: linear
+      position_encoder: sinusoidal
+      sequence_len: 1024
+      layers: 6
+      n_heads: 8
+  pattern: delay
+  n_codebooks: 4
+  pattern_special_token: 1025
+  mask_special_token: 1026
+  mask_before: false
 ckpt_path: null
