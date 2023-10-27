@@ -32,7 +32,9 @@ if __name__ == "__main__":
     datamodule = cli.datamodule
     trainer = cli.trainer
 
-    
+    ## wandb logger here + set callbacks for checkpointing and config saving before running fit with the wandb logger experiment name.
+
+
 
     print(model)
     print(datamodule)

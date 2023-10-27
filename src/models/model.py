@@ -135,6 +135,19 @@ class MuMRVQ (LightningModule):
             codes = new_codes
             padding_mask = new_padding_mask
 
-
-        print()
         return padding_mask, codes
+
+    def training_step(self,batch,batch_idx):
+        x = batch
+        waveform = x['wav']
+        lens = x['original_lens']
+        out_ = self(batch)
+        logits = out_['decoded_logits']
+        encoded = out_['encoded']
+        codes = out_['codes']
+        padding_mask = out_['padding_mask']
+
+        ## loss computations here
+        
+    def configure_optimizers(self):
+        return None
