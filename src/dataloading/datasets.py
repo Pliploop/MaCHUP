@@ -31,24 +31,25 @@ class CustomAudioDataset(Dataset):
 
         encodec_audio = convert_audio(waveform,sample_rate,self.target_sample_rate,1)
 
-        empty = torch.zeros(self.target_n_samples)
+        empty = torch.zeros(1,self.target_n_samples)
 
         if encodec_audio.shape[-1] > self.target_n_samples:
-            start = np.random.randint(0,self.target_n_samples - encodec_audio.shape[-1])
-            empty = encodec_audio[:,start:]
+            start = np.random.randint(low=0,high=encodec_audio.shape[-1] - self.target_n_samples)
+            empty = encodec_audio[:,start:start+self.target_n_samples]
             original_len = self.target_n_samples
         else:
             empty[:,:encodec_audio.shape[-1]] = encodec_audio
             original_len = encodec_audio.shape[-1]
 
+        waveform = empty
 
         return {
             "wav" : waveform,
-            "original_len" : original_len
+            "original_lens" : original_len
         }
 
 class CustomAudioDataModule(pl.LightningDataModule):
-    def __init__(self, train_data_dir = '', val_data_dir = '', batch_size=64, num_workers = 0, target_sample_rate=24000, target_length = 20):
+    def __init__(self, train_data_dir = None, val_data_dir = None, batch_size=64, num_workers = 0, target_sample_rate=24000, target_length = 20):
         super().__init__()
         self.train_data_dir = train_data_dir
         self.val_data_dir = val_data_dir
@@ -58,6 +59,8 @@ class CustomAudioDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.target_sample_rate = target_sample_rate
         self.target_length = target_length
+
+        
 
     def setup(self, stage=None):
         if stage == 'fit' or stage is None:
