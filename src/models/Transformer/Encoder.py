@@ -141,19 +141,30 @@ class Encoder(LightningModule):
         self.class_token = nn.Parameter(torch.randn(1, 1, self.d_model))
 
 
-    def forward(self, indices):
+    def forward(self, codes, padding_mask = None, mask_before = False):
         # indices is of shape B,n_q,T
-        B, K, T = indices.shape
+        B, K, T = codes.shape
         
+        
+        if mask_before:                                        # masking before, i.e all timesteps are sent to be encoded but allows for structured masking algos.
+            pass
 
-        input_ = self.emb(indices)
+
+        input_ = self.emb(codes)
+        print(input_.shape)
+
+        
+        if not mask_before:
+            pass
+
+
         # shape B,T,d_model
+        class_token = self.class_token.expand(B, 1, self.d_model)  # Expand class token for batch
+        input_ = torch.cat([class_token, input_], dim=1)
         input_ = self.position_encoder(input_)
         input_ = self.norm_in(input_)
         print(input_.shape)
-        class_token = self.class_token.expand(B, 1, self.d_model)  # Expand class token for batch
-        input_ = torch.cat([class_token, input_], dim=1)
-        output_ = self.transformer(input_)
+        output_ = self.transformer(input_, src_key_padding_mask = padding_mask)
         # shape B,T,d_model
 
         
@@ -165,6 +176,7 @@ class Encoder(LightningModule):
 
 
 class LinearEncoder(Encoder):
+    """"Does not work yet because of paddding mask implementation"""
     def __init__(self, n_codebooks=4, embedding_size=[512, 256, 128, 64], card=1024, embedding_behaviour='concat', position_encoder="sinusoidal", sequence_len=2048, layers=6, n_heads=8, *args, **kwargs) -> None:
         super().__init__(n_codebooks, embedding_size, card, embedding_behaviour, position_encoder, sequence_len, layers, n_heads, *args, **kwargs)
         self.norm = LayerNorm(self.d_model)
@@ -175,7 +187,7 @@ class VanillaEncoder(Encoder):
     def __init__(self, n_codebooks=4, embedding_size=[512, 256, 128, 64], card=1024, embedding_behaviour='concat', position_encoder="sinusoidal", sequence_len=2048, layers=6, n_heads=8, *args, **kwargs) -> None:
         super().__init__(n_codebooks, embedding_size, card, embedding_behaviour, position_encoder, sequence_len, layers, n_heads, *args, **kwargs)
         self.norm = LayerNorm(self.d_model)
-        self.transformer_layer = TransformerEncoderLayer(self.d_model, self.n_heads, activation="gelu")
+        self.transformer_layer = TransformerEncoderLayer(self.d_model, self.n_heads, activation="gelu", batch_first=True)
         self.transformer = TransformerEncoder(self.transformer_layer, self.layers, norm=self.norm)
 
 

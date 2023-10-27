@@ -25,6 +25,7 @@ class Encodec(LightningModule):
         # For the 48 kHz model, only 3, 6, 12, and 24 kbps are supported. The number
         # of codebooks for each is half that of the 24 kHz model as the frame rate is twice as much.
         self.model.set_target_bandwidth(self.model_bandwidth)
+        self.hop_length = self.model.encoder.hop_length
 
     def forward(self,wav):
         ## wav is a batched waveform.unsqueeze if not:

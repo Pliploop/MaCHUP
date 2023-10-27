@@ -59,8 +59,19 @@ model:
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
-      sequence_len: 1024
       layers: 6
+      n_heads: 8
+  decoder:
+    class_path: src.models.Transformer.Encoder.VanillaEncoder
+    init_args:
+      n_codebooks: 4
+      embedding_size:
+      - 512
+      - 256
+      - 128
+      - 64
+      card: 1024
+      layers: 4
       n_heads: 8
   pattern: delay
   n_codebooks: 4
