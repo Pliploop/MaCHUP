@@ -38,8 +38,6 @@ class Embed(LightningModule):
         return input_
 
 
-
-
 class Encoder(LightningModule):
     """"Default transformer encoder. Default behaviour is according to encodecMAE (or similar):
 
@@ -115,12 +113,13 @@ class Encoder(LightningModule):
     def forward(self, codes, padding_mask=None, mask_before=False, mask=True):
         # indices is of shape B,n_q,T
         B, K, T = codes.shape
+    
 
         # masking before, i.e all timesteps are sent to be encoded but allows for structured masking algos.
         if mask_before and mask:
             masked_idx, retained_idx, retained_padding_mask, codes, codes_mask = self.mask_before(
-                padding_mask = padding_mask,
-                codes = codes
+                padding_mask=padding_mask,
+                codes=codes
             )
 
         original_embeddings = self.emb(codes)  # B,T,d_model
@@ -158,30 +157,27 @@ class Encoder(LightningModule):
             print('shape coming out of encoder: ============')
             print(output_.shape)
 
-
-
-
-        ## unmasking happens here
+        # unmasking happens here
         if self.first_run:
             print("========= retained idx shape ============")
             print(torch.tensor(retained_idx).shape)
 
-
-        unmasked_output = self.unmask(embeddings = output_, original_embeddings = original_embeddings, masked_idx = masked_idx, retained_idx = retained_idx, retained_padding_mask = retained_padding_mask)
+        unmasked_output = self.unmask(embeddings=output_, original_embeddings=original_embeddings,
+                                      masked_idx=masked_idx, retained_idx=retained_idx, retained_padding_mask=retained_padding_mask)
 
         if self.first_run:
             print('========= All outputs for the encoder========')
             print('-------- masked output with class token --------')
             print(output_.shape)
-            print('-------- unmasked output with class token and original embeddingd without class token --------')
+            print(
+                '-------- unmasked output with class token and original embeddingd without class token --------')
             print(unmasked_output.shape)
             print(original_embeddings.shape)
             print('-------- codes_mask.shape ---------')
             print(codes_mask.shape)
             print('------ padding_mask.shape ----------')
             print(padding_mask.shape)
-            
-        
+
         self.first_run = False
 
         return output_, unmasked_output, codes_mask, padding_mask
@@ -215,44 +211,43 @@ class VanillaEncoder(Encoder):
 
 class UnMask(nn.Module):
 
-    def __init__(self, d_model = 512, *args, **kwargs) -> None:
+    def __init__(self, d_model=512, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.d_model = d_model
         self.mask_token = nn.Parameter(torch.randn(self.d_model))
+
         self.first_run = True
 
-    def forward(self, embeddings, original_embeddings, masked_idx,retained_idx, retained_padding_mask):
-        class_token = embeddings[:,0,:].unsqueeze(1)
-        without_class_token = embeddings[:,1:,:]
-        all_masked = torch.empty(original_embeddings.shape, device=original_embeddings.device, dtype=original_embeddings.dtype)
+    def forward(self, embeddings, original_embeddings, masked_idx, retained_idx, retained_padding_mask):
+        class_token = embeddings[:, 0, :].unsqueeze(1)
+        without_class_token = embeddings[:, 1:, :]
+        all_masked = torch.empty(
+            original_embeddings.shape, device=original_embeddings.device, dtype=original_embeddings.dtype)
 
         if self.first_run:
             print('=========== Masked without embeddings shape ========')
             print(all_masked.shape)
 
         for i, (cur_feat, ridx, midx) in enumerate(zip(without_class_token, retained_idx, masked_idx)):
-                    all_masked[i, ridx] = cur_feat
-                    all_masked[i, midx] = self.mask_token
+            all_masked[i, ridx] = cur_feat
+            all_masked[i, midx] = self.mask_token
 
         if self.first_run:
             print('========= all_masked.shape ==========')
             print(all_masked.shape)
             print('========= around masked index ========')
-            print(all_masked[0,retained_idx[1][1]-1 : retained_idx[1][1]+1, :3])
-            
-            print(all_masked[1,retained_idx[0][1]-1 : retained_idx[0][1]+1, :3])
+            print(all_masked[0, retained_idx[1]
+                  [1]-1: retained_idx[1][1]+1, :3])
+
+            print(all_masked[1, retained_idx[0]
+                  [1]-1: retained_idx[0][1]+1, :3])
             print("class token =============")
             print(class_token.shape)
 
-        all_masked = torch.cat([class_token,all_masked], dim = 1)
-
-
+        all_masked = torch.cat([class_token, all_masked], dim=1)
 
         return all_masked
-        
-
-
 
 
 class MaskBefore(nn.Module):

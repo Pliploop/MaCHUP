@@ -79,8 +79,8 @@ class MuMRVQ (LightningModule):
         if self.first_run:
             print(f'codes: {codes.shape}')
             print(f'padding_mask: {padding_mask.shape}')
-
-
+            
+        codes_are_padded = (codes == self.pad_special_token)
         encoded, unmasked_encoded, codes_mask, encoded_padding_mask = self.transformer_encoder(codes, padding_mask, self.mask_before)    ## Input and output SHAPE : [B,T,d_model], batch_first = True
         ## note : it is within the encoder that the masking happens and the class token is added. i.e for a masking ratio of 0.5 and a sequence length of 1024
         ## Masking is applied randomly and masked inputs are discarded : shape [B,512,d_model], same is done for padding_mask [B,512]
@@ -89,7 +89,7 @@ class MuMRVQ (LightningModule):
         # class token is temporarily removed from embeddings and padding mask for computing, masked tokens are added back as a shared embedding : [B,1024,d_model], [B,512,d_model]
         ## class token is added back in embeddings and padding_mask [B,1025,512], [B,1025,512]
 
-
+        codes[codes_are_padded] = self.pad_special_token
 
         # keep encoded for Contrastive loss
 
