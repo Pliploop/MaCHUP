@@ -53,18 +53,18 @@ class MuMRVQ (LightningModule):
         # x is an array of mono 24kHz audio truncated to a certain length. ['original_len'] denotes the  number of samples in the original array (if truncated) ande can be used to construct the padding mask later on
         ## e.g 
 
-        if isinstance(x,dict):                                       ## when loading from a dataloader:
+        if isinstance(x,dict):                                               ## when loading from a dataloader:
             wav = x['wav']
             lens = x['original_lens']
-        else:                                                        ## when running inference on an array for testing purposes
+        else:                                                               ## when running inference on an array for testing purposes
             wav = x
             lens = None
 
-        codes = self.encodec(wav)                                 ## SHAPE : [B, n_q, T]
+        codes = self.encodec(wav)                                           ## SHAPE : [B, n_q, T]
 
         if self.pattern_provider:
             codes, indices, pattern_mask = self.get_pattern(
-                codes)                                              # pattern application
+                codes)                                                     # pattern application (not needed because bidirectional)
 
         padding_mask, codes = self.create_padding_mask(codes,lens)         # SHAPE : [B,T] : boolean padding mask
 
@@ -81,18 +81,27 @@ class MuMRVQ (LightningModule):
             print(f'padding_mask: {padding_mask.shape}')
 
 
-        encoded = self.transformer_encoder(codes, padding_mask, self.mask_before)    ## Input and output SHAPE : [B,T,d_model], batch_first = True
+        encoded, unmasked_encoded, codes_mask, encoded_padding_mask = self.transformer_encoder(codes, padding_mask, self.mask_before)    ## Input and output SHAPE : [B,T,d_model], batch_first = True
+        ## note : it is within the encoder that the masking happens and the class token is added. i.e for a masking ratio of 0.5 and a sequence length of 1024
+        ## Masking is applied randomly and masked inputs are discarded : shape [B,512,d_model], same is done for padding_mask [B,512]
+        # class token is added : shape [B,513,d_model], padding_mask is catted with a 0 at the start : [B,513]
+        # this is encoded with the transformer encoder : [B,513,d_model]
+        # class token is temporarily removed from embeddings and padding mask for computing, masked tokens are added back as a shared embedding : [B,1024,d_model], [B,512,d_model]
+        ## class token is added back in embeddings and padding_mask [B,1025,512], [B,1025,512]
+
+
+
         # keep encoded for Contrastive loss
 
-        decoded_logits = self.transformer_decoder(encoded)      ## SHAPE : [B,n_q,T,card]
-        # decoded_logits  = decoded_logits.masked_fill(torch.isnan(decoded_logits), -1e20)
+        decoded_logits = self.transformer_decoder(unmasked_encoded, padding_mask = encoded_padding_mask)      ## SHAPE : [B,n_q,T,card]
 
         # keep decoded for contrastive loss
 
-        # cross-entropy between codes and decoded/encoded
 
-        
-        # encoded = encoded.masked_fill(torch.isnan(encoded), -1e20)
+
+
+
+        # cross-entropy between codes and decoded/encoded        =
 
 
         self.first_run = False
@@ -100,6 +109,7 @@ class MuMRVQ (LightningModule):
         return {"logits": decoded_logits,
                 "encoded": encoded,
                 "codes": codes,
+                "codes_mask" : codes_mask,
                 "padding_mask" : padding_mask}
 
     def get_pattern(self, codes):

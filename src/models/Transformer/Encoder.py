@@ -7,6 +7,7 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer, LayerNorm
 from linformer import Linformer
 import random
 
+from src.models.utils import LearnedPositionalEncoding, PositionalEncoding
 
 class Embed(LightningModule):
 
@@ -36,51 +37,6 @@ class Embed(LightningModule):
         return input_
 
 
-class PositionalEncoding(LightningModule):
-
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 1024):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2)
-                             * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        """
-        Arguments:
-            x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
-        """
-        x = x + self.pe[:x.size(0)]
-        return self.dropout(x)
-
-
-class LearnedPositionalEncoding(LightningModule):
-
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 2048):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        # Define a learnable parameter for positional encodings
-        self.positional_encodings = nn.Parameter(
-            torch.randn(max_len, 1, d_model))
-
-    def forward(self, x):
-        """
-        Arguments:
-            x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
-        """
-        # Get the positional encodings
-        pe = self.positional_encodings[:x.size(0)]
-
-        # Add positional encodings to the input
-        x = x + pe
-
-        return self.dropout(x)
 
 
 class Encoder(LightningModule):
@@ -151,6 +107,9 @@ class Encoder(LightningModule):
             d_model=self.d_model, p=p, batched_mask=batched_mask)
         self.mask_before = MaskBefore(
             d_model=self.d_model, p=p, batched_mask=batched_mask, mask_special_token=mask_special_token)
+        self.unmask = UnMask(d_model=self.d_model)
+
+        self.first_run = True
 
     def forward(self, codes, padding_mask=None, mask_before=False, mask=True):
         # indices is of shape B,n_q,T
@@ -158,23 +117,32 @@ class Encoder(LightningModule):
 
         # masking before, i.e all timesteps are sent to be encoded but allows for structured masking algos.
         if mask_before and mask:
-            pass
+            masked_idx, retained_idx, retained_padding_mask, codes, codes_mask = self.mask_before(
+                padding_mask = padding_mask,
+                codes = codes
+            )
 
-        input_ = self.emb(codes)  # B,T,d_model
+        original_embeddings = self.emb(codes)  # B,T,d_model
 
         if not mask_before and mask:
             masked_idx, retained_idx, retained_padding_mask, input_, codes_mask = self.mask_after(
-                x=input_, padding_mask=padding_mask, codes=codes)
+                x=original_embeddings, padding_mask=padding_mask, codes=codes)
+
+        if mask_before and mask:
+            input_ = original_embeddings
 
         if not mask:
             codes_mask = torch.zeros_like(codes).to(codes.device)
             retained_padding_mask = padding_mask
+            input_ = original_embeddings
 
         # shape B,T,d_model
         class_token = self.class_token.expand(
             B, 1, self.d_model)  # Expand class token for batch
         retained_padding_mask = torch.cat([torch.zeros(
             B, 1, device=retained_padding_mask.device), retained_padding_mask], dim=1)
+        padding_mask = torch.cat([torch.zeros(
+            B, 1, device=retained_padding_mask.device), padding_mask], dim=1)
 
         input_ = torch.cat([class_token, input_], dim=1)
         input_ = self.position_encoder(input_)
@@ -185,7 +153,37 @@ class Encoder(LightningModule):
 
         # assert output_.shape == (B,T+1,self.d_model), f"{output_.shape}"
 
-        return output_
+        if self.first_run:
+            print('shape coming out of encoder: ============')
+            print(output_.shape)
+
+
+
+
+        ## unmasking happens here
+        if self.first_run:
+            print("========= retained idx shape ============")
+            print(torch.tensor(retained_idx).shape)
+
+
+        unmasked_output = self.unmask(embeddings = output_, original_embeddings = original_embeddings, masked_idx = masked_idx, retained_idx = retained_idx, retained_padding_mask = retained_padding_mask)
+
+        if self.first_run:
+            print('========= All outputs for the encoder========')
+            print('-------- masked output with class token --------')
+            print(output_.shape)
+            print('-------- unmasked output with class token and original embeddingd without class token --------')
+            print(unmasked_output.shape)
+            print(original_embeddings.shape)
+            print('-------- codes_mask.shape ---------')
+            print(codes_mask.shape)
+            print('------ padding_mask.shape ----------')
+            print(padding_mask.shape)
+            
+        
+        self.first_run = False
+
+        return output_, unmasked_output, codes_mask, padding_mask
 
 
 class LinearEncoder(Encoder):
@@ -212,6 +210,48 @@ class VanillaEncoder(Encoder):
             self.d_model, self.n_heads, activation="gelu", batch_first=True)
         self.transformer = TransformerEncoder(
             self.transformer_layer, self.layers, norm=self.norm)
+
+
+class UnMask(nn.Module):
+
+    def __init__(self, d_model = 512, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.d_model = d_model
+        self.mask_token = nn.Parameter(torch.randn(self.d_model))
+        self.first_run = True
+
+    def forward(self, embeddings, original_embeddings, masked_idx,retained_idx, retained_padding_mask):
+        class_token = embeddings[:,0,:].unsqueeze(1)
+        without_class_token = embeddings[:,1:,:]
+        all_masked = torch.empty(original_embeddings.shape, device=original_embeddings.device, dtype=original_embeddings.dtype)
+
+        if self.first_run:
+            print('=========== Masked without embeddings shape ========')
+            print(all_masked.shape)
+
+        for i, (cur_feat, ridx, midx) in enumerate(zip(without_class_token, retained_idx, masked_idx)):
+                    all_masked[i, ridx] = cur_feat
+                    all_masked[i, midx] = self.mask_token
+
+        if self.first_run:
+            print('========= all_masked.shape ==========')
+            print(all_masked.shape)
+            print('========= around masked index ========')
+            print(all_masked[0,retained_idx[1][1]-1 : retained_idx[1][1]+1, :3])
+            
+            print(all_masked[1,retained_idx[0][1]-1 : retained_idx[0][1]+1, :3])
+            print("class token =============")
+            print(class_token.shape)
+
+        all_masked = torch.cat([class_token,all_masked], dim = 1)
+
+
+
+        return all_masked
+        
+
+
 
 
 class MaskBefore(nn.Module):
@@ -243,13 +283,12 @@ class MaskBefore(nn.Module):
         # with chunks (opens the possibility of entire rows being discarded)
         # column-wise (same thing)
         # full codebook (probably a hard regularizer, only restrain to one codebook)
-
-        retained_idx = list(range(T))
+        retained_idx = [list(range(T)) for b in range(B)]
         masked_idx = []
 
         # random masking
 
-        codes_mask = torch.empty_like(codes).uniform_() > self.mask_p
+        codes_mask = torch.empty(codes.shape).uniform_() > self.mask_p
         codes[codes_mask] = self.mask_special_token
 
         if self.first_run:

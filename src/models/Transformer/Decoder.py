@@ -7,6 +7,9 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer, LayerNorm
 from linformer import Linformer
 
 
+from src.models.utils import LearnedPositionalEncoding, PositionalEncoding
+
+
 
 
 class Decoder(LightningModule):
@@ -24,6 +27,7 @@ class Decoder(LightningModule):
             layers = 4,
             n_heads = 8,
             embedding_behaviour = 'concat',
+            position_encoder = 'sinusoidal',
             *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
@@ -46,14 +50,20 @@ class Decoder(LightningModule):
         self.layers = layers
 
         self.transformer = None
-       
 
-    def forward(self, embeddings):
+        if position_encoder == 'sinusoidal':
+            self.position_encoder = PositionalEncoding(
+                self.d_model, max_len=self.sequence_len)
+        else:
+            self.position_encoder = LearnedPositionalEncoding(
+                self.d_model, mex_len=self.sequence_len)
+
+    def forward(self, embeddings, padding_mask = None):
         # indices is of shape B,n_q,T
         B, T, d_model = embeddings.shape
         
 
-        output_ = self.transformer(embeddings)
+        output_ = self.transformer(embeddings, src_key_padding_mask = padding_mask)
         # shape B,T,d_model
 
         logits = torch.stack([self.linears[k](output_) for k in range(self.n_codebooks)], dim=1).permute(0, 3, 1, 2)
@@ -73,7 +83,7 @@ class VanillaDecoder(Decoder):
     def __init__(self, n_codebooks=4, card=1024, embedding_size=[512, 256, 128, 64], sequence_len=2048, layers=4, n_heads=8, embedding_behaviour="concat", *args, **kwargs) -> None:
         super().__init__(n_codebooks, card, embedding_size,sequence_len, layers, n_heads, embedding_behaviour, *args, **kwargs)
         self.norm = LayerNorm(self.d_model)
-        self.transformer_layer = TransformerEncoderLayer(self.d_model, self.n_heads, activation="gelu")
+        self.transformer_layer = TransformerEncoderLayer(self.d_model, self.n_heads, activation="gelu", batch_first = True)
         self.transformer = TransformerEncoder(self.transformer_layer, self.layers, norm=self.norm)
 
 
