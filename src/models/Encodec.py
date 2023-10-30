@@ -11,11 +11,11 @@ from torch import nn
 
 class Encodec(LightningModule):
 
-    def __init__(self,  sample_rate = 24000, frozen = True, model_bandwidth = 3,*args, **kwargs) -> None:
+    def __init__(self,  sample_rate=24000, frozen=True, model_bandwidth=3, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.frozen = frozen
         self.model_bandwidth = model_bandwidth
-        if sample_rate == 24000 :
+        if sample_rate == 24000:
             self.model = EncodecModel.encodec_model_24khz()
         else:
             self.model = EncodecModel.encodec_model_48khz()
@@ -27,18 +27,19 @@ class Encodec(LightningModule):
         self.model.set_target_bandwidth(self.model_bandwidth)
         self.hop_length = self.model.encoder.hop_length
 
-    def forward(self,wav):
-        ## wav is a batched waveform.unsqueeze if not:
+    def forward(self, wav):
+        # wav is a batched waveform.unsqueeze if not:
         if wav.dim() == 2:
             wav = wav.unsqueeze(0)
-        
-        if self.frozen :
+
+        if self.frozen:
             with torch.no_grad():
 
                 encoded_frames = self.model.encode(wav)
         else:
             encoded_frames = self.model.encode(wav)
-        
-        codes = torch.cat([encoded[0] for encoded in encoded_frames], dim=-1)  # [B, n_q, T]
+
+        codes = torch.cat([encoded[0]
+                          for encoded in encoded_frames], dim=-1)  # [B, n_q, T]
 
         return codes
