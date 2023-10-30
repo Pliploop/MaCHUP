@@ -1,13 +1,14 @@
-from torch import nn
-import torch
 import math
-from pytorch_lightning import LightningModule
-from linear_attention_transformer import LinearAttentionTransformerLM
-from torch.nn import TransformerEncoder, TransformerEncoderLayer, LayerNorm
-from linformer import Linformer
 import random
 
+import torch
+from linear_attention_transformer import LinearAttentionTransformerLM
+from linformer import Linformer
+from pytorch_lightning import LightningModule
 from src.models.utils import LearnedPositionalEncoding, PositionalEncoding
+from torch import nn
+from torch.nn import LayerNorm, TransformerEncoder, TransformerEncoderLayer
+
 
 class Embed(LightningModule):
 
