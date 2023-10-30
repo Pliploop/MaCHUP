@@ -116,22 +116,23 @@ class MuMRVQ (LightningModule):
                 original_lens = original_lens.unsqueeze(0)
             
             encoded_lens = original_lens//self.encodec.model.encoder.hop_length
-            for i, l in enumerate(encoded_lens):
+            for i, l in enumerate(encoded_lens.squeeze()):
+                print(l)
                 padding_mask[i,l:]=1
                 codes[i,:,l:] = self.pad_special_token
         return padding_mask, codes
 
     def pad_codes_to_length(self,codes, padding_mask):
-        target_padding_mask_shape = (padding_mask.shape[0], self.sequence_length +1) ## Accounting for future class token
-        target_codes_shapes = (padding_mask.shape[0], padding_mask.shape[1], self.sequence_length)
+        target_padding_mask_shape = (padding_mask.shape[0], self.sequence_length) ## Accounting for future class token
+        target_codes_shapes = (codes.shape[0], codes.shape[1], self.sequence_length)
         if codes.shape[-1] > self.sequence_length:
-            padding_mask = padding_mask[:,:self.sequence_length +1]
+            padding_mask = padding_mask[:,:self.sequence_length]
             codes = codes[:,:,:self.sequence_length]
         else:
-            new_padding_mask = torch.ones(target_padding_mask_shape).bool()
-            new_codes = torch.full(target_codes_shapes,self.pad_special_token)
-            new_padding_mask[:,padding_mask.shape[-1]] = padding_mask
-            new_codes[:,:,codes.shape[-1]] = codes
+            new_padding_mask = torch.ones(target_padding_mask_shape).bool().to(codes.device)
+            new_codes = torch.full(target_codes_shapes,self.pad_special_token).to(codes.device)
+            new_padding_mask[:,:padding_mask.shape[-1]] = padding_mask
+            new_codes[:,:,:codes.shape[-1]] = codes
             codes = new_codes
             padding_mask = new_padding_mask
 

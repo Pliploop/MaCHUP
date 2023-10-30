@@ -78,4 +78,4 @@ model:
   pattern_special_token: 1025
   mask_special_token: 1026
   mask_before: false
-ckpt_path: null
+ckpt_path: ''
