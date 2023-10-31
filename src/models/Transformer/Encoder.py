@@ -156,6 +156,15 @@ class Encoder(nn.Module):
             retained_padding_mask = padding_mask
             input_ = original_embeddings
 
+        codes[codes_mask] = self.mask_special_token
+        
+        if self.first_run:
+            print("============== codes_masking ==============")
+            print(codes_mask)
+            print(codes_mask.shape)
+            print(f"{codes_mask.sum()} tokens were masked with random masking")
+
+
         # shape B,T,d_model
         class_token = self.class_token.expand(
             B, 1, self.d_model
@@ -280,18 +289,12 @@ class Encoder(nn.Module):
         # random masking
 
         codes_mask = torch.empty(codes.shape).uniform_() > self.mask_p
-        codes[codes_mask] = self.mask_special_token
-
-        if self.first_run:
-            print("============== codes_masking ==============")
-            print(codes_mask.shape)
-            print(f"{codes_mask.sum()} tokens were masked with random masking")
+        
 
         retained_padding_mask = padding_mask
 
         # do some checking here for whole masked columns -> change retained_idx, masked_idx, and retained_padding_mask
 
-        self.first_run = False
         return masked_idx, retained_idx, retained_padding_mask, codes, codes_mask
         # All masking modules will return:
         # the list of masked indices, the list of unsmaked indices, the retained padding mask, the retained features, the masked code matrix (boolean)
@@ -308,8 +311,7 @@ class Encoder(nn.Module):
         num_retained_tokens = max(1, num_retained_tokens)
 
         if self.first_run:
-            print(f"masking proba : {self.mask_p}")
-            print(f"tokens to mask : {T-num_retained_tokens}")
+            print(f"masking after with masking proba : {self.mask_p}")
 
         # used to compute loss over masked tokens. because this is after, mask by columns
         codes_mask = torch.zeros_like(codes).to(codes.device)
@@ -339,15 +341,8 @@ class Encoder(nn.Module):
             x = torch.stack(new_x, dim=0)
             retained_padding_mask = torch.stack(retained_padding_mask, dim=0)
 
-        if self.first_run:
-            print("============== codes_masking ==============")
-            print(codes_mask)
-            print(codes_mask.shape)
-
-            print("============== new x shape ================")
-            print(x.shape)
-
-        self.first_run = False
+        codes_mask = (codes_mask == 1)
+        
         return x, masked_idx, retained_idx, retained_padding_mask, codes_mask
         # All masking modules will return:
         # the list of masked indices, the list of unsmaked indices, the retained padding mask, the retained features, the masked code matrix (boolean)
