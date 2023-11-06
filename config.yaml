@@ -3,13 +3,13 @@ seed_everything: 123
 trainer:
   accelerator: auto
   strategy: auto
-  devices: auto
+  devices: 1
   num_nodes: 1
   precision: null
   logger: null
   callbacks: null
   fast_dev_run: false
-  max_epochs: null
+  max_epochs: 10
   min_epochs: null
   max_steps: -1
   min_steps: null
@@ -22,14 +22,14 @@ trainer:
   val_check_interval: null
   check_val_every_n_epoch: 1
   num_sanity_val_steps: null
-  log_every_n_steps: null
-  enable_checkpointing: null
-  enable_progress_bar: null
-  enable_model_summary: null
+  log_every_n_steps: 10
+  enable_checkpointing: true
+  enable_progress_bar: true
+  enable_model_summary: true
   accumulate_grad_batches: 1
   gradient_clip_val: null
   gradient_clip_algorithm: null
-  deterministic: null
+  deterministic: true
   benchmark: null
   inference_mode: true
   use_distributed_sampler: true
@@ -41,12 +41,6 @@ trainer:
   reload_dataloaders_every_n_epochs: 0
   default_root_dir: null
 model:
-  encodec:
-    class_path: src.models.Encodec.Encodec
-    init_args:
-      sample_rate: 24000
-      frozen: true
-      model_bandwidth: 3
   encoder:
     class_path: src.models.Transformer.Encoder.VanillaEncoder
     init_args:
@@ -59,23 +53,41 @@ model:
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
-      layers: 6
+      sequence_len: 2048
+      layers: 4
       n_heads: 8
+      p: 0.5
+      batched_mask: false
+      mask_special_token: 1025
   decoder:
-    class_path: src.models.Transformer.Encoder.VanillaEncoder
+    class_path: src.models.Transformer.Decoder.VanillaDecoder
     init_args:
-      n_codebooks: 4
       embedding_size:
       - 512
       - 256
       - 128
       - 64
-      card: 1024
-      layers: 4
+      layers: 2
       n_heads: 8
-  pattern: delay
+      position_encoder: sinusoidal
+  encodec:
+    class_path: src.models.Encodec.Encodec
+    init_args:
+      frozen: true
+      model_bandwidth: 3
+  pattern: none
   n_codebooks: 4
-  pattern_special_token: 1025
-  mask_special_token: 1026
-  mask_before: false
-ckpt_path: ''
+  sequence_length: 1024
+  pattern_special_token: 1024
+  mask_special_token: 1025
+  pad_special_token: 1026
+  mask_before: true
+  debug: false
+data:
+  train_data_dir: /import/c4dm-datasets/clotho/evaluation
+  val_data_dir: null
+  batch_size: 4
+  num_workers: 2
+  target_sample_rate: 24000
+  target_length: 20
+log: false

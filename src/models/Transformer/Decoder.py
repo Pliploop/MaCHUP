@@ -4,6 +4,7 @@ from torch import nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, LayerNorm
 from linformer import Linformer
 from src.models.utils import LearnedPositionalEncoding, PositionalEncoding
+from pytorch_lightning import LightningModule
 
 
 class Decoder(nn.Module):

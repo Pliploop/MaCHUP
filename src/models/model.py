@@ -6,15 +6,15 @@ from audiocraft.modules.codebooks_patterns import (
     VALLEPattern,
 )
 import torch
-import numpy as np
+import torch.optim as optim
 
 
 class MuMRVQ(LightningModule):
     def __init__(
         self,
-        encoder: LightningModule,
-        decoder: LightningModule,
-        encodec=None,
+        encoder: nn.Module,
+        decoder: nn.Module,
+        encodec: nn.Module,
         pattern="delay",
         n_codebooks=4,
         sequence_length=1024,
@@ -51,6 +51,11 @@ class MuMRVQ(LightningModule):
         self.debug = debug
 
         self.first_run = True
+        
+        self.cross_entropy_simple = nn.CrossEntropyLoss(ignore_index=self.pad_special_token) 
+        
+        ## 1 loss per codebook for unmasked and masked regions. for sequence length L, scale masked vs unmasked by delta/M and (1-delta)/M
+        ## per codebook should be weighted by gamma_q, arbitrary?
 
     def forward(self, x):
         # x is an array of mono 24kHz audio truncated to a certain length. ['original_len'] denotes the  number of samples in the original array (if truncated) ande can be used to construct the padding mask later on
@@ -100,6 +105,7 @@ class MuMRVQ(LightningModule):
         # class token is temporarily removed from embeddings and padding mask for computing, masked tokens are added back as a shared embedding : [B,1024,d_model], [B,512,d_model]
         # class token is added back in embeddings and padding_mask [B,1025,512], [B,1025,512]
 
+        codes = codes.clone()
         codes[codes_are_padded] = self.pad_special_token
 
         # keep encoded for Contrastive loss
@@ -140,7 +146,6 @@ class MuMRVQ(LightningModule):
 
             encoded_lens = original_lens // self.encodec.model.encoder.hop_length
             for i, l in enumerate(encoded_lens.squeeze()):
-                print(l)
                 padding_mask[i, l:] = 1
                 codes[i, :, l:] = self.pad_special_token
         return padding_mask, codes
@@ -167,18 +172,30 @@ class MuMRVQ(LightningModule):
         return padding_mask, codes
 
     def training_step(self, batch, batch_idx):
+        torch.autograd.set_detect_anomaly(True)
         x = batch
         waveform = x["wav"]
         lens = x["original_lens"]
+        
+        
         out_ = self(batch)
-        logits = out_["decoded_logits"]
+        logits = out_["logits"]
         encoded = out_["encoded"]
         codes = out_["codes"]
+        codes_mask = out_['codes_mask']
         padding_mask = out_["padding_mask"]
+        
+        simple_crossentropy = self.cross_entropy_simple(logits[:,:,:,1:],codes.clone().long())
 
         # loss computations here
         # per-codebook loss of masked vs non-masked tokens (so 8 parameters total)
         # contrastive loss - TBD
-
+        
+        self.log("train_crossentropy_simple", simple_crossentropy)
+        
+        return simple_crossentropy
+        
+        
     def configure_optimizers(self):
-        return None
+        optimizer = optim.AdamW(self.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.05)
+        return optimizer

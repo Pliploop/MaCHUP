@@ -1,19 +1,17 @@
 from encodec import EncodecModel
 from encodec.utils import convert_audio
-
-import torchaudio
 import torch
+from torch import nn
 
 from pytorch_lightning import LightningModule
 
-from torch import nn
 
-
-class Encodec(LightningModule):
+class Encodec(nn.Module):
 
     def __init__(self,  sample_rate=24000, frozen=True, model_bandwidth=3, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.frozen = frozen
+        
         self.model_bandwidth = model_bandwidth
         if sample_rate == 24000:
             self.model = EncodecModel.encodec_model_24khz()
@@ -25,6 +23,10 @@ class Encodec(LightningModule):
         # For the 48 kHz model, only 3, 6, 12, and 24 kbps are supported. The number
         # of codebooks for each is half that of the 24 kHz model as the frame rate is twice as much.
         self.model.set_target_bandwidth(self.model_bandwidth)
+        
+        if self.frozen:
+            for param in self.model.parameters(): param.requires_grad = False
+        
         self.hop_length = self.model.encoder.hop_length
 
     def forward(self, wav):
@@ -42,4 +44,4 @@ class Encodec(LightningModule):
         codes = torch.cat([encoded[0]
                           for encoded in encoded_frames], dim=-1)  # [B, n_q, T]
 
-        return codes
+        return codes.int()
