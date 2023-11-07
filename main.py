@@ -13,11 +13,16 @@ import shutil
 class LoggerSaveConfigCallback(SaveConfigCallback):
     def save_config(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
             if trainer.logger is not None:
+                experiment_name = trainer.logger.experiment.name
                 config = self.parser.dump(self.config, skip_none=False)  # Required for proper reproducibility
                 with open(self.config_filename, "r") as config_file:
                     config = yaml.load(config_file, Loader=yaml.FullLoader)
                     trainer.logger.experiment.config.update(config)
-        
+                with open(os.path.join(os.path.join(self.config['ckpt_path'], experiment_name),"config.yaml"), 'w') as outfile:
+                    yaml.dump(config, outfile, default_flow_style=False)
+                    
+                callbacks = [ModelCheckpoint(os.path.join(self.config['ckpt_path'], experiment_name),monitor="val_crossentropy_simple",save_top_k=1, filename="checkpoint_{epoch}")]
+                trainer.callbacks = trainer.callbacks[:-1]+callbacks
 
 class MyLightningCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
@@ -33,14 +38,14 @@ class MyLightningCLI(LightningCLI):
 
 if __name__ == "__main__":
     
-    cli = MyLightningCLI(model_class=MuMRVQ, datamodule_class=CustomAudioDataModule, seed_everything_default = 123, run = False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite":True})
+    cli = MyLightningCLI(model_class=MuMRVQ, datamodule_class=CustomAudioDataModule, seed_everything_default = 123, run = False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite":True},)
     
     
     cli.instantiate_classes()
 
     
     if cli.config.log:
-        logger = WandbLogger(project="MuMRVQ")
+        logger = WandbLogger(project="MuMRVQ", log_model=False)
     else:
         logger = None
         
@@ -50,17 +55,16 @@ if __name__ == "__main__":
     
     experiment_name = cli.trainer.logger.experiment.name
     ckpt_path = cli.config.ckpt_path
-    if not os.path.exists(os.path.join(ckpt_path,experiment_name)):
-        os.makedirs(os.path.join(cli.config.ckpt_path,experiment_name))
-    shutil.copy(cli.config.config[0],os.path.join(cli.config.ckpt_path,experiment_name))
-    if cli.config.log_model:
-        callbacks = [ModelCheckpoint(os.path.join(cli.config.ckpt_path,experiment_name),monitor="val_crossentropy_simple",save_top_k=1)]
-        cli.trainer.callbacks = cli.trainer.callbacks + callbacks
-        
     
-        
-        
     
-        
+    
+    
+    try:
+        if not os.path.exists(os.path.join(ckpt_path,experiment_name)):
+            os.makedirs(os.path.join(ckpt_path,experiment_name))
+    except:
+        pass
+    
+    
     
     cli.trainer.fit(model=cli.model,datamodule=cli.datamodule)

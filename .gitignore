@@ -1,6 +1,6 @@
 *.pyc
 wandb
-MuMRVQ_checkpoints
+MuMRVQ
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

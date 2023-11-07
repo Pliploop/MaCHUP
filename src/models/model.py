@@ -20,7 +20,7 @@ class MuMRVQ(LightningModule):
         encoder: nn.Module,
         decoder: nn.Module,
         encodec: nn.Module,
-        optimizer: OptimizerCallable,
+        optimizer: OptimizerCallable = None,
         pattern="delay",
         n_codebooks=4,
         sequence_length=1024,
@@ -59,6 +59,7 @@ class MuMRVQ(LightningModule):
         self.first_run = True
         
         self.cross_entropy_simple = nn.CrossEntropyLoss(ignore_index=self.pad_special_token) 
+        self.optimizer = optimizer
         
         ## 1 loss per codebook for unmasked and masked regions. for sequence length L, scale masked vs unmasked by delta/M and (1-delta)/M
         ## per codebook should be weighted by gamma_q, arbitrary?
