@@ -1,3 +1,5 @@
+from typing import Any
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch import nn
 from pytorch_lightning import LightningModule
 from audiocraft.modules.codebooks_patterns import (
@@ -7,6 +9,9 @@ from audiocraft.modules.codebooks_patterns import (
 )
 import torch
 import torch.optim as optim
+import wandb 
+import matplotlib.pyplot as plt
+from pytorch_lightning.cli import OptimizerCallable
 
 
 class MuMRVQ(LightningModule):
@@ -15,6 +20,7 @@ class MuMRVQ(LightningModule):
         encoder: nn.Module,
         decoder: nn.Module,
         encodec: nn.Module,
+        optimizer: OptimizerCallable,
         pattern="delay",
         n_codebooks=4,
         sequence_length=1024,
@@ -107,6 +113,11 @@ class MuMRVQ(LightningModule):
 
         codes = codes.clone()
         codes[codes_are_padded] = self.pad_special_token
+        
+        masked_codes = codes.clone()
+        masked_codes[codes_mask] = -1000 ## purely for logging and visual purposes
+        
+        
 
         # keep encoded for Contrastive loss
 
@@ -123,6 +134,7 @@ class MuMRVQ(LightningModule):
             "logits": decoded_logits,
             "encoded": encoded,
             "codes": codes,
+            "masked_codes": masked_codes,
             "codes_mask": codes_mask,
             "padding_mask": padding_mask,
         }
@@ -184,6 +196,7 @@ class MuMRVQ(LightningModule):
         codes = out_["codes"]
         codes_mask = out_['codes_mask']
         padding_mask = out_["padding_mask"]
+        masked_codes = out_['masked_codes']
         
         simple_crossentropy = self.cross_entropy_simple(logits[:,:,:,1:],codes.clone().long())
 
@@ -191,11 +204,41 @@ class MuMRVQ(LightningModule):
         # per-codebook loss of masked vs non-masked tokens (so 8 parameters total)
         # contrastive loss - TBD
         
-        self.log("train_crossentropy_simple", simple_crossentropy)
+        self.log("train_crossentropy_simple", simple_crossentropy, prog_bar=True)
+        if self.logger is not None and self.global_step %1000 == 0:
+            
+            fig,ax = plt.subplots(2,1)
+            ax[0].imshow(masked_codes[0,:,:20].cpu().numpy(), vmin = -1000, vmax = 1000, cmap="plasma")
+            ax[1].imshow(codes[0,:,:20].cpu().numpy(), vmin = -1000, vmax = 1000, cmap = 'plasma')
+            
+            self.logger.log_image("masked and unmasked tokens", [wandb.Image(fig)])
         
         return simple_crossentropy
         
+    def validation_step(self, batch) -> STEP_OUTPUT:
+        torch.autograd.set_detect_anomaly(True)
+        x = batch
+        out_ = self(batch)
+        logits = out_["logits"]
+        encoded = out_["encoded"]
+        codes = out_["codes"]
+        codes_mask = out_['codes_mask']
+        padding_mask = out_["padding_mask"]
+        masked_codes = out_['masked_codes']
+        
+        simple_crossentropy = self.cross_entropy_simple(logits[:,:,:,1:],codes.clone().long())
+
+        # loss computations here
+        # per-codebook loss of masked vs non-masked tokens (so 8 parameters total)
+        # contrastive loss - TBD
+        
+        self.log("val_crossentropy_simple", simple_crossentropy, prog_bar=True)
+        
+        return simple_crossentropy
         
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.05)
+        if self.optimizer is None:
+            optimizer = optim.AdamW(self.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
+        else:
+            optimizer = self.optimizer(self.parameters())
         return optimizer

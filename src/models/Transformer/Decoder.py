@@ -56,6 +56,8 @@ class Decoder(nn.Module):
         # indices is of shape B,n_q,T
         B, T, d_model = embeddings.shape
 
+        embeddings = self.position_encoder(embeddings)
+
         output_ = self.transformer(
             embeddings, src_key_padding_mask=padding_mask)
         # shape B,T,d_model

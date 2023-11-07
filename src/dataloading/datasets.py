@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 from encodec.utils import convert_audio
 import torch
 import numpy as np
-
+import soundfile as sf
 
 class CustomAudioDataset(Dataset):
     def __init__(self, data_dir, transform=None, target_sample_rate = 24000, target_length = 20):
@@ -23,7 +23,9 @@ class CustomAudioDataset(Dataset):
         file_name = self.file_list[idx]
         file_path = os.path.join(self.data_dir, file_name)
 
-        waveform, sample_rate = torchaudio.load(file_path)
+        # waveform, sample_rate = torchaudio.load(file_path)
+        waveform, sample_rate = sf.read(file_path, stop=None, dtype='float32', always_2d=True)
+        waveform = torch.Tensor(waveform.transpose())
 
         if self.transform:
             waveform = self.transform(waveform)

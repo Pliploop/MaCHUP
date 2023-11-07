@@ -10,6 +10,11 @@ import yaml
 class LoggerSaveConfigCallback(SaveConfigCallback):
     def save_config(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
             if trainer.logger is not None:
+                print('========== wandb logging dir ================')
+                print(trainer.logger.log_dir)
+                print('============ wandb logger save dir =========')
+                print(trainer.logger.save_dir)
+                
                 config = self.parser.dump(self.config, skip_none=False)  # Required for proper reproducibility
                 with open(self.config_filename, "r") as config_file:
                     config = yaml.load(config_file, Loader=yaml.FullLoader)

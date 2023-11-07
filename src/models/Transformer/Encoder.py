@@ -137,7 +137,6 @@ class Encoder(nn.Module):
 
         # masking before, i.e all timesteps are sent to be encoded but allows for structured masking algos.
         if mask_before and mask:
-            print('masking before')
             (
                 masked_idx,
                 retained_idx,
@@ -265,7 +264,7 @@ class Encoder(nn.Module):
             zip(without_class_token, retained_idx, masked_idx) ################# PROBLEM HERE ALL NANS
         ):
             all_masked[i, ridx] = cur_feat.clone()
-            all_masked[i, midx] = self.mask_token.clone()
+            all_masked[i, midx] = self.mask_token.clone().expand(len(midx),-1)
             
         if self.first_run:
             print("========= all_masked.shape ==========")
@@ -322,6 +321,8 @@ class Encoder(nn.Module):
 
         if self.first_run:
             print(f"masking after with masking proba : {self.mask_p}")
+            print(x.shape)
+            print(self.encoder_mask_emb.shape)
 
         # used to compute loss over masked tokens. because this is after, mask by columns
         codes_mask = torch.zeros_like(codes).to(codes.device)
@@ -336,7 +337,7 @@ class Encoder(nn.Module):
             retained_idx.append(cur_retained_idx)
             cur_masked_idx = idx[num_retained_tokens:]
             masked_idx.append(cur_masked_idx)
-            x[i, cur_masked_idx] = self.encoder_mask_emb.clone()
+            x[i, cur_masked_idx,:] = self.encoder_mask_emb.clone().expand(len(cur_masked_idx),-1)
             codes_mask[i, :, cur_masked_idx] = 1
 
         if self.batched_mask:
