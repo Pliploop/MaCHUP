@@ -14,7 +14,9 @@ class Embed(nn.Module):
     ) -> None:
         super().__init__(*args, **kwargs)
         self.embedding_behaviour = embedding_behaviour
+        
         self.embedding_sizes = embedding_sizes
+        
         self.n_codebooks = n_codebooks
         self.card = card
 
@@ -72,10 +74,11 @@ class Encoder(nn.Module):
         super().__init__(*args, **kwargs)
 
         self.n_codebooks = n_codebooks
+        self.embedding_behaviour = embedding_behaviour
         self.embedding_size = embedding_size
+        
         self.card = card
         self.sequence_len = sequence_len
-        self.embedding_behaviour = embedding_behaviour
         self.mask_special_token = mask_special_token
 
         if self.embedding_behaviour == "concat":
@@ -131,7 +134,7 @@ class Encoder(nn.Module):
 
         self.first_run = True
 
-    def forward(self, codes, padding_mask=None, mask_before=False, mask=True):
+    def forward(self, codes, padding_mask=None, mask_before=False, mask=True, contrastive_matrix = None):
         # indices is of shape B,n_q,T
         B, K, T = codes.shape
 
@@ -143,7 +146,8 @@ class Encoder(nn.Module):
                 retained_padding_mask,
                 codes,
                 codes_mask,
-            ) = self.mask_before(padding_mask=padding_mask, codes=codes)
+                contrastive_matrix
+            ) = self.mask_before(padding_mask=padding_mask, codes=codes, contrastive_matrix = contrastive_matrix)
 
         original_embeddings = self.emb(codes)  # B,T,d_model
         original_embeddings = self.position_encoder(original_embeddings)
@@ -155,8 +159,9 @@ class Encoder(nn.Module):
                 retained_idx,
                 retained_padding_mask,
                 codes_mask,
+                contrastive_matrix
             ) = self.mask_after(
-                x=original_embeddings, padding_mask=padding_mask, codes=codes
+                x=original_embeddings, padding_mask=padding_mask, codes=codes, contrastive_matrix = contrastive_matrix
             )
 
         if mask_before and mask:
@@ -198,6 +203,9 @@ class Encoder(nn.Module):
         )
 
         input_ = torch.cat([class_token, input_], dim=1)
+        ## Deal with contrastive matrix here
+        
+        
         input_ = self.norm_in(input_)
         output_ = self.transformer(
             input_, src_key_padding_mask=retained_padding_mask)
@@ -276,7 +284,7 @@ class Encoder(nn.Module):
 
         return all_masked
     
-    def mask_before(self, padding_mask, codes):
+    def mask_before(self, padding_mask, codes, contrastive_matrix):
         """creates a mask for the input. the input here is codes of shape B, K, T."""
 
         B, K, T = codes.shape
@@ -304,11 +312,11 @@ class Encoder(nn.Module):
 
         # do some checking here for whole masked columns -> change retained_idx, masked_idx, and retained_padding_mask
 
-        return masked_idx, retained_idx, retained_padding_mask, codes, codes_mask
+        return masked_idx, retained_idx, retained_padding_mask, codes, codes_mask, contrastive_matrix
         # All masking modules will return:
         # the list of masked indices, the list of unsmaked indices, the retained padding mask, the retained features, the masked code matrix (boolean)
 
-    def mask_after(self, x, padding_mask, codes):
+    def mask_after(self, x, padding_mask, codes, contrastive_matrix):
         """creates a mask for the input. note that the same amount of tokens must be masked in each batch (because of matrices). so either:
         - mask a precise amount of tokens
         - create a batch mask (easier)
@@ -354,86 +362,86 @@ class Encoder(nn.Module):
 
         codes_mask = (codes_mask == 1)
         
-        return x, masked_idx, retained_idx, retained_padding_mask, codes_mask
+        return x, masked_idx, retained_idx, retained_padding_mask, codes_mask, contrastive_matrix
         # All masking modules will return:
         # the list of masked indices, the list of unsmaked indices, the retained padding mask, the retained features, the masked code matrix (boolean)
 
 
-class LinearEncoder(Encoder):
-    """ "Does not work yet because of paddding mask implementation"""
+# class LinearEncoder(Encoder):
+#     """ "Does not work yet because of paddding mask implementation"""
 
-    def __init__(
-        self,
-        n_codebooks=4,
-        embedding_size=[512, 256, 128, 64],
-        card=1024,
-        embedding_behaviour="concat",
-        position_encoder="sinusoidal",
-        sequence_len=2048,
-        layers=6,
-        n_heads=8,
-        p=0.5,
-        batched_mask=False,
-        mask_special_token=1025,
-        *args,
-        **kwargs,
-    ) -> None:
-        super().__init__(
-            n_codebooks,
-            embedding_size,
-            card,
-            embedding_behaviour,
-            position_encoder,
-            sequence_len,
-            layers,
-            n_heads,
-            p,
-            batched_mask,
-            mask_special_token,
-            *args,
-            **kwargs,
-        )
-        self.norm = LayerNorm(self.d_model)
-        self.transformer = Linformer(
-            self.d_model, self.sequence_len, self.layers)
+#     def __init__(
+#         self,
+#         n_codebooks=4,
+#         embedding_size=[512, 256, 128, 64],
+#         card=1024,
+#         embedding_behaviour="concat",
+#         position_encoder="sinusoidal",
+#         sequence_len=2048,
+#         layers=6,
+#         n_heads=8,
+#         p=0.5,
+#         batched_mask=False,
+#         mask_special_token=1025,
+#         *args,
+#         **kwargs,
+#     ) -> None:
+#         super().__init__(
+#             n_codebooks,
+#             embedding_size,
+#             card,
+#             embedding_behaviour,
+#             position_encoder,
+#             sequence_len,
+#             layers,
+#             n_heads,
+#             p,
+#             batched_mask,
+#             mask_special_token,
+#             *args,
+#             **kwargs,
+#         )
+#         self.norm = LayerNorm(self.d_model)
+#         self.transformer = Linformer(
+#             self.d_model, self.sequence_len, self.layers)
 
 
-class VanillaEncoder(Encoder):
-    def __init__(
-        self,
-        n_codebooks=4,
-        embedding_size=[512, 256, 128, 64],
-        card=1024,
-        embedding_behaviour="concat",
-        position_encoder="sinusoidal",
-        sequence_len=2048,
-        layers=6,
-        n_heads=8,
-        p=0.5,
-        batched_mask=False,
-        mask_special_token=1025,
-        *args,
-        **kwargs,
-    ) -> None:
-        super().__init__(
-            n_codebooks,
-            embedding_size,
-            card,
-            embedding_behaviour,
-            position_encoder,
-            sequence_len,
-            layers,
-            n_heads,
-            p,
-            batched_mask,
-            mask_special_token,
-            *args,
-            **kwargs,
-        )
-        self.norm = LayerNorm(self.d_model)
-        self.transformer_layer = TransformerEncoderLayer(
-            self.d_model, self.n_heads, activation="gelu", batch_first=True
-        )
-        self.transformer = TransformerEncoder(
-            self.transformer_layer, self.layers, norm=self.norm
-        )
+# class VanillaEncoder(Encoder):
+#     def __init__(
+#         self,
+#         n_codebooks=4,
+#         embedding_size=[512, 256, 128, 64],
+#         card=1024,
+#         embedding_behaviour="concat",
+#         position_encoder="sinusoidal",
+#         sequence_len=2048,
+#         layers=6,
+#         n_heads=8,
+#         p=0.5,
+#         batched_mask=False,
+#         mask_special_token=1025,
+#         *args,
+#         **kwargs,
+#     ) -> None:
+#         super().__init__(
+#             n_codebooks,
+#             embedding_size,
+#             card,
+#             embedding_behaviour,
+#             position_encoder,
+#             sequence_len,
+#             layers,
+#             n_heads,
+#             p,
+#             batched_mask,
+#             mask_special_token,
+#             *args,
+#             **kwargs,
+#         )
+#         self.norm = LayerNorm(self.d_model)
+#         self.transformer_layer = TransformerEncoderLayer(
+#             self.d_model, self.n_heads, activation="gelu", batch_first=True
+#         )
+#         self.transformer = TransformerEncoder(
+#             self.transformer_layer, self.layers, norm=self.norm
+#         )

@@ -5,7 +5,7 @@ trainer:
   strategy: ddp_find_unused_parameters_true
   devices: 1
   num_nodes: 1
-  precision: null
+  precision: 16
   logger: null
   callbacks: null
   fast_dev_run: false
@@ -46,15 +46,15 @@ model:
     init_args:
       n_codebooks: 4
       embedding_size:
-      - 512
       - 256
       - 128
+      - 64
       - 64
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
       sequence_len: 2048
-      layers: 4
+      layers: 6
       n_heads: 8
       p: 0.5
       batched_mask: false
@@ -63,11 +63,12 @@ model:
     class_path: src.models.Transformer.Decoder.VanillaDecoder
     init_args:
       embedding_size:
-      - 512
       - 256
       - 128
       - 64
+      - 64
       position_encoder: sinusoidal
+      embedding_behaviour: concat
       layers: 2
       n_heads: 8
   optimizer:
@@ -76,30 +77,33 @@ model:
       lr: 0.0001
       betas: 
         - 0.9
-        - 0.999
+        - 0.95
       eps: 1e-8
-      weight_decay: 0.01
+      weight_decay: 0.05
   
   pattern: none
   n_codebooks: 4
-  sequence_length: 1024
+  sequence_len: 751
   pattern_special_token: 1024
   mask_special_token: 1025
   pad_special_token: 1026
   mask_before: false
   debug: false
+  masked_loss_ratio: 1
   encodec:
     class_path: src.models.Encodec.Encodec
     init_args:
       frozen: true
       model_bandwidth: 3
 data:
-  train_data_dir: "/import/c4dm-datasets/clotho/development"
-  val_data_dir: "/import/c4dm-datasets/clotho/validation"
-  batch_size: 32
-  num_workers: 16
+  train_data_dir: "/import/research_c4dm/JulienMarcoChrisRMRI/MTAT_wav"
+  val_data_dir: null
+  batch_size: 16
+  num_workers: 50
   target_sample_rate: 24000
-  target_length: 20
-log: true
+  target_length: 10
+  n_augmentations: 2
+  validation_split: 0.1
+log: false
 log_model: true
 ckpt_path : 'MuMRVQ'

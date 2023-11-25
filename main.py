@@ -1,5 +1,5 @@
 
-from src.models.model import MuMRVQ
+from src.models.model import MaCHUP
 from pytorch_lightning.cli import LightningCLI
 from src.dataloading.datasets import CustomAudioDataModule
 from pytorch_lightning.cli import SaveConfigCallback
@@ -30,7 +30,8 @@ class MyLightningCLI(LightningCLI):
         parser.link_arguments("model.encoder.init_args.emebdding_size", "model.decoder.init_args.eùbedding_size")
         parser.link_arguments("model.encoder.init_args.card", "model.decoder.init_args.card")
         parser.link_arguments("model.encoder.init_args.embedding_behaviour", "model.decoder.init_args.embedding_behaviour")
-        parser.link_arguments("model.encoder.init_args.sequence_len", "model.decoder.init_args.sequence_len")
+        parser.link_arguments("model.sequence_len", "model.encoder.init_args.sequence_len")
+        parser.link_arguments("model.sequence_len", "model.decoder.init_args.sequence_len")
         parser.link_arguments("data.target_sample_rate","model.encodec.init_args.sample_rate")
         parser.add_argument("--log", default=False)
         parser.add_argument("--log_model", default=True)
@@ -38,7 +39,7 @@ class MyLightningCLI(LightningCLI):
 
 if __name__ == "__main__":
     
-    cli = MyLightningCLI(model_class=MuMRVQ, datamodule_class=CustomAudioDataModule, seed_everything_default = 123, run = False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite":True},)
+    cli = MyLightningCLI(model_class=MaCHUP, datamodule_class=CustomAudioDataModule, seed_everything_default = 123, run = False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite":True},)
     
     
     cli.instantiate_classes()
@@ -46,6 +47,9 @@ if __name__ == "__main__":
     
     if cli.config.log:
         logger = WandbLogger(project="MuMRVQ", log_model=False)
+        
+        experiment_name = logger.experiment.name
+        ckpt_path = cli.config.ckpt_path
     else:
         logger = None
         
@@ -53,8 +57,6 @@ if __name__ == "__main__":
     
     cli.trainer.logger = logger
     
-    experiment_name = cli.trainer.logger.experiment.name
-    ckpt_path = cli.config.ckpt_path
     
     
     
