@@ -1,5 +1,5 @@
 # MuMRVQ
-MultiTask RVQ for music representation learning
+Multiscale Contrastive Learning for Music with RVQ
 
 Using RVQ and Multitask for representation learning:
 
