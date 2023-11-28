@@ -44,13 +44,14 @@ class Decoder(nn.Module):
         self.layers = layers
 
         self.transformer = None
+        self.position_encoder = position_encoder
 
-        if position_encoder == 'sinusoidal':
+        if self.position_encoder == 'sinusoidal':
             self.position_encoder = PositionalEncoding(
                 self.d_model, max_len=self.sequence_len)
         else:
             self.position_encoder = LearnedPositionalEncoding(
-                self.d_model, mex_len=self.sequence_len)
+                self.d_model, max_len=self.sequence_len)
 
     def forward(self, embeddings, padding_mask=None):
         # indices is of shape B,n_q,T
@@ -67,6 +68,16 @@ class Decoder(nn.Module):
 
         return logits
 
+    def adapt_sequence_len(self,new_sequence_len):
+        self.sequence_len = new_sequence_len
+        # if self.position_encoder == "sinusoidal":
+        #     self.position_encoder = PositionalEncoding(
+        #         self.d_model, max_len=self.sequence_len
+        #     )
+        # else:
+        #     self.position_encoder = LearnedPositionalEncoding(
+        #         self.d_model, max_len=self.sequence_len
+        #     )
 
 class LinearDecoder(Decoder):
     def __init__(self, n_codebooks=4, card=1024, embedding_size=[512, 256, 128, 64], sequence_len=2048, layers=4, n_heads=8, embedding_behaviour="concat", *args, **kwargs) -> None:

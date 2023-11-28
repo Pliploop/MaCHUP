@@ -1,11 +1,11 @@
 # pytorch_lightning==2.1.0
-seed_everything: 42
+seed_everything: 123
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
   devices: '1'
   num_nodes: 1
-  precision: 16
+  precision: null
   logger: null
   callbacks: null
   fast_dev_run: false
@@ -27,7 +27,7 @@ trainer:
   enable_progress_bar: true
   enable_model_summary: true
   accumulate_grad_batches: 1
-  gradient_clip_val: null
+  gradient_clip_val: 1
   gradient_clip_algorithm: null
   deterministic: warn
   benchmark: null
@@ -53,9 +53,9 @@ model:
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
-      layers: 6
-      n_heads: 8
-      p: 0.5
+      layers: 10
+      n_heads: 16
+      p: 0.95
       batched_mask: false
       mask_special_token: 1025
   decoder:
@@ -80,9 +80,9 @@ model:
       lr: 0.0001
       betas:
       - 0.9
-      - 0.95
+      - 0.999
       eps: 1.0e-08
-      weight_decay: 0.05
+      weight_decay: 0.0
       amsgrad: false
       maximize: false
       foreach: null
@@ -91,23 +91,26 @@ model:
       fused: null
   pattern: none
   n_codebooks: 4
-  sequence_len: 751
+  sequence_len: 100
   pattern_special_token: 1024
   mask_special_token: 1025
   pad_special_token: 1026
   mask_before: false
   debug: false
-  masked_loss_ratio: 0
+  masked_loss_ratio: 1
   masked_objective: true
+  window_size: 75
+  adapt_sequence_len: true
 data:
   train_data_dir: /import/research_c4dm/JulienMarcoChrisRMRI/MTAT_wav
   val_data_dir: null
   batch_size: 16
-  num_workers: 50
+  num_workers: 64
   target_sample_rate: 24000
-  target_length: 10
+  target_length: 5
   validation_split: 0.1
-  n_augmentations: 2
+  n_augmentations: 4
+  transform: true
 log: 'true'
 log_model: true
 ckpt_path: MuMRVQ
