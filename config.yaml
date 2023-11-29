@@ -55,7 +55,7 @@ model:
       position_encoder: sinusoidal
       layers: 10
       n_heads: 16
-      p: 0.95
+      p: 0.9
       batched_mask: false
       mask_special_token: 1025
   decoder:
@@ -97,20 +97,21 @@ model:
   pad_special_token: 1026
   mask_before: false
   debug: false
-  masked_loss_ratio: 1
+  masked_loss_ratio: 0
   masked_objective: true
   window_size: 75
   adapt_sequence_len: true
 data:
   train_data_dir: /import/research_c4dm/JulienMarcoChrisRMRI/MTAT_wav
   val_data_dir: null
-  batch_size: 16
+  batch_size: 8
   num_workers: 64
   target_sample_rate: 24000
   target_length: 5
   validation_split: 0.1
   n_augmentations: 4
-  transform: true
+  transform: false
+  sanity_check_n: 32
 log: 'true'
 log_model: true
 ckpt_path: MuMRVQ

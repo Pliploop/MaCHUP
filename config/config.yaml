@@ -90,6 +90,7 @@ model:
   mask_before: false
   debug: false
   masked_loss_ratio: 1
+  contrastive_to_masked_ratio: 1
   masked_objective: true
   window_size: 75
   encodec:
@@ -100,13 +101,14 @@ model:
 data:
   train_data_dir: "/import/research_c4dm/JulienMarcoChrisRMRI/MTAT_wav"
   val_data_dir: null
-  batch_size: 16
+  batch_size: 8
   num_workers: 64
   target_sample_rate: 24000
   target_length: 5
   n_augmentations: 4
   validation_split: 0.1
-  transform: true
+  transform: false
+  sanity_check_n: 64
 log: false
 log_model: true
 ckpt_path : 'MuMRVQ'

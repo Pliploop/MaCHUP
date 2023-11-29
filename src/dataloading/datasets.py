@@ -21,6 +21,7 @@ class CustomAudioDataset(Dataset):
         
         if sanity_check_n is not None:
             self.transform = False  ## turn off augmentations for sanity checks
+            self.file_list = self.file_list[:sanity_check_n]
             
         
         self.target_sample_rate = target_sample_rate
