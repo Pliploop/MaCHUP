@@ -1,4 +1,4 @@
-from typing import Any
+
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch import nn
 from pytorch_lightning import LightningModule
@@ -13,8 +13,8 @@ import wandb
 import matplotlib.pyplot as plt
 from pytorch_lightning.cli import OptimizerCallable
 import torch.nn.functional as F
-from src.models.losses import SupConLoss, MySupConLoss
-import torch.autograd.profiler as profiler
+from src.models.losses import  MySupConLoss
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 class MaCHUP(LightningModule):
@@ -24,10 +24,8 @@ class MaCHUP(LightningModule):
         decoder: nn.Module,
         encodec: nn.Module,
         optimizer: OptimizerCallable = None,
-        pattern="delay",
         n_codebooks=4,
         sequence_len=1024,
-        pattern_special_token=1024,
         mask_special_token=1025,
         pad_special_token=1026,
         mask_before=False,
@@ -37,6 +35,11 @@ class MaCHUP(LightningModule):
         window_size=50,
         adapt_sequence_len=True,
         contrastive_to_masked_ratio=0.5,
+        global_vs_local_contrastive_loss_ratio=0.1,
+        global_class_vs_average_contrastive_loss_ratio=1,
+        contrastive_temperature = 0.5,
+        reduce_lr_monitor = 'overall_loss',
+        only_global_contrastive = False,
         *args,
         **kwargs,
     ) -> None:
@@ -44,42 +47,38 @@ class MaCHUP(LightningModule):
         self.encodec = encodec
         self.transformer_encoder = encoder
         self.transformer_decoder = decoder
+        self.d_model = self.transformer_encoder.d_model
         self.sequence_len = sequence_len
         self.window_size = window_size
         self.adapt_sequence_len = adapt_sequence_len
         self.contrastive_to_masked_ratio = contrastive_to_masked_ratio
-
-        self.pattern = pattern
-        self.pattern_correspondence = {
-            "delay": DelayedPatternProvider,
-            "unrolled": UnrolledPatternProvider,
-            "valle": VALLEPattern,
-            "none": None,
-        }
+        self.global_vs_local_contrastive_loss_ratio = global_vs_local_contrastive_loss_ratio
+        self.global_class_vs_average_contrastive_loss_ratio = global_class_vs_average_contrastive_loss_ratio
+        self.reduce_lr_monitor = reduce_lr_monitor
+        self.only_global_contrastive = only_global_contrastive
         self.masked_loss_ratio = masked_loss_ratio
 
-        self.pattern_special_token = pattern_special_token
         self.mask_special_token = mask_special_token
         self.pad_special_token = pad_special_token
 
-        self.pattern_provider = self.pattern_correspondence[pattern]
-        if self.pattern_provider:
-            self.pattern_provider = self.pattern_provider(n_q=n_codebooks)
         self.mask_before = mask_before
         self.masked_objective = masked_objective
         self.optimizer = optimizer
         self.first_run = True
 
-        self.supconloss = MySupConLoss(temperature=0.5)
-        self.extended_bacth_size = 0
-        self.simple_batrch_size = 0
-
-        # 1 loss per codebook for unmasked and masked regions. for sequence length L, scale masked vs unmasked by delta/M and (1-delta)/M
-        # per codebook should be weighted by gamma_q, arbitrary?
+        self.supconloss = MySupConLoss(temperature=contrastive_temperature)
+        self.extended_batch_size = 0
+        self.simple_batch_size = 0
+        
+        self.proj_head = nn.Sequential(
+            nn.Linear(self.d_model, self.d_model),
+            nn.ReLU(),
+            nn.Linear(self.d_model, 128)
+        )
+        
 
     def forward(self, x):
         # x is an array of mono 24kHz audio truncated to a certain length. ['original_len'] denotes the  number of samples in the original array (if truncated) ande can be used to construct the padding mask later on
-        # e.g
         if self.first_run:
             torch.autograd.set_detect_anomaly(True)
 
@@ -102,16 +101,102 @@ class MaCHUP(LightningModule):
             print(f'tensor shape after augmentation batching: {wav.shape}')
 
         codes = self.encodec(wav)  # SHAPE : [B * N, n_q, T]
+        embeddings = self.encodec.model.encoder(wav).squeeze().permute(0,2,1)  # SHAPE : [B * N, T, d_encodec]
 
         if self.adapt_sequence_len and self.first_run:
             self.transformer_encoder.adapt_sequence_len(codes.shape[-1])
             self.transformer_decoder.adapt_sequence_len(codes.shape[-1])
             self.sequence_len = codes.shape[-1]
 
-        # if self.pattern_provider:
-        #     codes, indices, pattern_mask = self.get_pattern(
-        #         codes
-        #     )  # pattern application (not needed because bidirectional)
+
+        padding_mask, codes = self.create_padding_mask(
+            codes, lens
+        )  # SHAPE : [B,T] : boolean padding mask
+
+        if self.first_run:
+            print(f"codes: {codes.shape}")
+            print(f"padding_mask: {padding_mask.shape}")
+
+        padding_mask, codes = self.pad_codes_to_length(codes, padding_mask)
+        codes_are_padded = codes == self.pad_special_token
+
+        if self.first_run:
+            print(f"codes: {codes.shape}")
+            print(f"padding_mask: {padding_mask.shape}")
+            
+        if self.only_global_contrastive : 
+            T = 0
+        else:
+            T = codes.shape[-1]
+
+        if self.first_run or T*B*N != self.extended_batch_size:
+            print(f'creating contrastive matrix for batch size {B*N} and sequence length {codes.shape[-1]}')
+            print(f'previous batch size was {self.extended_batch_size}')
+            
+            self.contrastive_matrix = self.get_contrastive_matrix(
+                T=T, B=B, N=N, W=self.window_size, device=codes.device)
+            
+        encoded, unmasked_encoded, codes_mask, encoded_padding_mask, contrastive_matrix_dict = self.transformer_encoder(
+            codes=codes,
+            padding_mask=padding_mask,
+            mask_before=self.mask_before,
+            contrastive_matrix=self.contrastive_matrix
+        )
+        
+        codes = codes.clone()
+        codes[codes_are_padded] = self.pad_special_token
+
+        masked_codes = codes.clone()
+        # purely for logging and visual purposes
+        masked_codes[codes_mask] = -1000
+
+        # keep encoded for Contrastive loss
+
+        decoded_logits = self.transformer_decoder(
+            unmasked_encoded, padding_mask=encoded_padding_mask
+        )  # SHAPE : [B,n_q,T,card]
+
+        projected = self.proj_head(encoded)
+
+        return {
+            "logits": decoded_logits,
+            "encoded": encoded,
+            "projected": projected,
+            "codes": codes,
+            "masked_codes": masked_codes,
+            "codes_mask": codes_mask,
+            "padding_mask": padding_mask,
+            "contrastive_matrix_dict": contrastive_matrix_dict,
+            "encodec_embeddings" : embeddings
+        }
+        
+    def finetune_forward(self, x):
+        # x is an array of mono 24kHz audio truncated to a certain length. ['original_len'] denotes the  number of samples in the original array (if truncated) ande can be used to construct the padding mask later on
+        if self.first_run:
+            torch.autograd.set_detect_anomaly(True)
+
+        if isinstance(x, dict):  # when loading from a dataloader:
+            wav = x["wav"]
+            lens = x["original_lens"]
+        else:  # when running inference on an array for testing purposes
+            wav = x
+            lens = None
+
+
+        if self.first_run:
+            print(f'tensor shape before augmentation batching: {wav.shape}')
+
+
+        if self.first_run:
+            print(f'tensor shape after augmentation batching: {wav.shape}')
+
+        codes = self.encodec(wav)  # SHAPE : [B * N, n_q, T]
+        embeddings = self.encodec.model.encoder(wav).squeeze().permute(0,2,1)  # SHAPE : [B * N, T, d_encodec]
+
+        if self.adapt_sequence_len and self.first_run:
+            self.transformer_encoder.adapt_sequence_len(codes.shape[-1])
+            self.transformer_decoder.adapt_sequence_len(codes.shape[-1])
+            self.sequence_len = codes.shape[-1]
 
         padding_mask, codes = self.create_padding_mask(
             codes, lens
@@ -128,63 +213,39 @@ class MaCHUP(LightningModule):
             print(f"codes: {codes.shape}")
             print(f"padding_mask: {padding_mask.shape}")
 
-        if self.first_run or codes.shape[-1]*B*N != self.extended_batch_size:
-            self.contrastive_matrix = self.get_contrastive_matrix(
-                T=codes.shape[-1], B=B, N=N, W=self.window_size, device=codes.device)
 
-        encoded, unmasked_encoded, codes_mask, encoded_padding_mask, contrastive_matrix_dict = self.transformer_encoder(
+        encoded, _, _, encoded_padding_mask, _ = self.transformer_encoder.finetune_forward(
             codes=codes,
-            padding_mask=padding_mask,
-            mask_before=self.mask_before,
-            contrastive_matrix=self.contrastive_matrix
+            padding_mask=padding_mask
         )
-
-    # Input and output SHAPE : [B,T,d_model], batch_first = True
-    # note : it is within the encoder that the masking happens and the class token is added. i.e for a masking ratio of 0.5 and a sequence length of 1024
-    # Masking is applied randomly and masked inputs are discarded : shape [B,512,d_model], same is done for padding_mask [B,512]
-    # class token is added : shape [B,513,d_model], padding_mask is catted with a 0 at the start : [B,513]
-    # this is encoded with the transformer encoder : [B,513,d_model]
-    # class token is temporarily removed from embeddings and padding mask for computing, masked tokens are added back as a shared embedding : [B,1024,d_model], [B,512,d_model]
-    # class token is added back in embeddings and padding_mask [B,1025,512], [B,1025,512]
 
         codes = codes.clone()
         codes[codes_are_padded] = self.pad_special_token
 
-        masked_codes = codes.clone()
-        # purely for logging and visual purposes
-        masked_codes[codes_mask] = -1000
 
-        # keep encoded for Contrastive loss
-
-        decoded_logits = self.transformer_decoder(
-            unmasked_encoded, padding_mask=encoded_padding_mask
+        decoded_logits = self.transformer_decoder.finetune_forward(
+            encoded, padding_mask=encoded_padding_mask
         )  # SHAPE : [B,n_q,T,card]
 
         # keep decoded for contrastive loss
         # cross-entropy between codes and decoded/encoded
+        self.first_run = False
+        
+        projected = self.proj_head(encoded)
 
         return {
             "logits": decoded_logits,
             "encoded": encoded,
+            "projected": projected,
             "codes": codes,
-            "masked_codes": masked_codes,
-            "codes_mask": codes_mask,
             "padding_mask": padding_mask,
-            "contrastive_matrix_dict": contrastive_matrix_dict
+            "encodec_embeddings" : embeddings
         }
-
-    def get_pattern(self, codes):
-        B, K, T = codes.shape
-        pattern = self.pattern_provider.get_pattern(T)
-        new_codes, indices, mask = pattern.build_pattern_sequence(
-            codes, self.pattern_special_token
-        )
-        return new_codes, indices, mask
+        
 
     def create_padding_mask(self, codes, original_lens):
-        # +1 because of class token to be added later on
         padding_mask = torch.zeros(
-            (codes.shape[0], codes.shape[2] + 1), dtype=bool, device=codes.device
+            (codes.shape[0], codes.shape[2]), dtype=bool, device=codes.device
         )
         if original_lens is not None:
             if original_lens.dim() == 1:
@@ -197,11 +258,10 @@ class MaCHUP(LightningModule):
         return padding_mask, codes
 
     def pad_codes_to_length(self, codes, padding_mask):
-        # Accounting for future class token
         target_padding_mask_shape = (
-            padding_mask.shape[0], self.sequence_len+1)
+            padding_mask.shape[0], self.sequence_len)
         target_codes_shapes = (
-            codes.shape[0], codes.shape[1], self.sequence_len+1)
+            codes.shape[0], codes.shape[1], self.sequence_len)
         if codes.shape[-1] > self.sequence_len:
             padding_mask = padding_mask[:, : self.sequence_len]
             codes = codes[:, :, : self.sequence_len]
@@ -217,7 +277,7 @@ class MaCHUP(LightningModule):
 
         return padding_mask, codes
 
-    def get_contrastive_matrix(self, B, T, N, W, device=None):
+    def get_contrastive_matrix(self, B, T, N, W, device=None, window_stride=1):
 
         total_samples = B * T * N
 
@@ -230,11 +290,19 @@ class MaCHUP(LightningModule):
         window_width = W // 2 + 1
         window_mask = torch.diag(torch.ones((total_samples), device=device), 0)
 
-        for k in range(1, window_width):
-            window_mask += torch.diag(torch.ones((total_samples - k),
-                                      device=device), k)
-            window_mask += torch.diag(torch.ones((total_samples - k),
-                                      device=device), -k)
+        indices = torch.arange(total_samples,device = device).unsqueeze(0)
+
+        # Create the window mask
+        window_mask = (indices - indices.T).abs() < window_width
+
+        # Mask out with stride, every row that is not a multiple of the stride
+        window_mask[torch.arange(total_samples) % window_stride != 0] = 0
+
+        # Add the transpose of the mask to itself to make it symmetric
+        window_mask += window_mask.clone().T
+
+        # Set all elements above zero to one
+        window_mask[window_mask > 0] = 1
 
         # Apply the window mask
         window_mask = window_mask[:total_samples, :total_samples]
@@ -245,105 +313,212 @@ class MaCHUP(LightningModule):
         return (same_sequence + window_mask)*same_sequence, (B, N, T, W)
 
     def get_contrastive_loss(self, encoded, contrastive_matrix_removed):
-
-        Bext, T, d = encoded.shape
+        
+        Bext, T, d = encoded.shape  
         only_class_tokens = encoded[:, 0, :].contiguous().view(-1, d)
-        only_class_tokens_matrix = contrastive_matrix_removed[::T, ::T]
-
-        positive_mask = (contrastive_matrix_removed == 2)
-        negative_mask = (contrastive_matrix_removed == 0)
-        neutral_mask = (contrastive_matrix_removed == 1)
-
-        positive_class = (only_class_tokens_matrix == 2)
-        negative_class = (only_class_tokens_matrix == 0)
-
+        only_average_pool = torch.mean(encoded[:, 1:, :], dim=1)
         encoded = encoded.contiguous().view(-1, d)
+        
+        
+        if not self.only_global_contrastive:
+            only_class_tokens_matrix = contrastive_matrix_removed[::T, ::T]
+            positive_mask = (contrastive_matrix_removed == 2)
+            negative_mask = torch.ones_like(positive_mask).bool()
+            neutral_mask = (contrastive_matrix_removed == 1)
+            
 
-        # split_size = encoded.shape[0]//2
-        # f1,f2 = torch.split(encoded,[split_size,split_size], dim=0)
-        # encoded  = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
+            loss = self.supconloss(encoded, positive_mask=positive_mask,
+                                negative_mask=negative_mask, neutral_mask=neutral_mask)
 
-        # IMPORTANT NOTE : THIS IS HOW THE AUTHOR IMPLEMENTS IT. BUT THIS DOESN'T WORK BECAUSE IT CONSIDERS ALL VIEWS AS SAME INTANCES WHICH WE DON'T DO
+        else:
+            only_class_tokens_matrix = contrastive_matrix_removed
+            
+            
+        positive_class = (only_class_tokens_matrix == 2)
+        negative_class = torch.ones_like(positive_class).bool()
+   
 
-        loss = self.supconloss(encoded, positive_mask=positive_mask,
-                               negative_mask=negative_mask, neutral_mask=neutral_mask)
+        assert only_average_pool.shape == only_class_tokens.shape, print(
+            only_average_pool.shape, only_class_tokens.shape)
+
+
+
+        if self.logger is not None and self.global_step % 100 == 0:
+            if not self.only_global_contrastive:
+                similarity_matrix = self.supconloss.get_similarities(encoded)
+                similarity_matrix = similarity_matrix * \
+                    (~(torch.eye(
+                        similarity_matrix.shape[0], device=similarity_matrix.device).bool())).int()
+
+                fig, ax = plt.subplots(1, 1)
+                ax.imshow(similarity_matrix.detach().cpu().numpy(), cmap="plasma")
+                self.logger.log_image(
+                    "similarity matrix", [wandb.Image(fig)])
+                plt.close(fig)
+
+                # log a smaller subset of the similarity matrix
+                fig, ax = plt.subplots(1, 1)
+                ax.imshow(similarity_matrix.detach().cpu().numpy()[
+                        :8 * T, :8 * T], cmap="plasma")
+                self.logger.log_image(
+                    "similarity matrix (smaller subset)", [wandb.Image(fig)])
+                plt.close(fig)
+
+            class_similarity_matrix = self.supconloss.get_similarities(only_class_tokens)
+            avg_similarity_matrix = self.supconloss.get_similarities(only_average_pool)
+
+            class_similarity_matrix = class_similarity_matrix * \
+                (~(torch.eye(
+                    class_similarity_matrix.shape[0], device=class_similarity_matrix.device).bool())).int()
+
+
+            avg_similarity_matrix = avg_similarity_matrix * \
+                (~(torch.eye(
+                    avg_similarity_matrix.shape[0], device=avg_similarity_matrix.device).bool())).int()
+
+            fig, ax = plt.subplots(1, 1)
+            ax.imshow(class_similarity_matrix.detach(
+            ).cpu().numpy(), cmap="plasma")
+            self.logger.log_image(
+                "class similarity matrix", [wandb.Image(fig)])
+            plt.close(fig)
+
+            fig, ax = plt.subplots(1, 1)
+            ax.imshow(avg_similarity_matrix.detach(
+            ).cpu().numpy(), cmap="plasma")
+            self.logger.log_image(
+                "average pool similarity matrix", [wandb.Image(fig)])
+            plt.close(fig)
+
         class_loss = self.supconloss(
             only_class_tokens, positive_mask=positive_class, negative_mask=negative_class)
 
-        return loss, class_loss
+        average_pool_loss = self.supconloss(
+            only_average_pool, positive_mask=positive_class, negative_mask=negative_class)
+
+        global_loss = self.global_class_vs_average_contrastive_loss_ratio * class_loss + \
+            (1-self.global_class_vs_average_contrastive_loss_ratio) * average_pool_loss
+     
+        if self.only_global_contrastive:
+            return global_loss, global_loss, class_loss, average_pool_loss
+        
+        return loss, global_loss, class_loss, average_pool_loss
 
     def training_step(self, batch, batch_idx):
         torch.autograd.set_detect_anomaly(True)
         x = batch
-        waveform = x["wav"]
-        lens = x["original_lens"]
 
-        if self.first_run:
-            with profiler.profile(with_stack=True, profile_memory=True) as prof:
-                out_ = self(batch)
-            print(prof.key_averages(group_by_stack_n=5).table(
-                sort_by='self_cpu_time_total', row_limit=20))
+        # if self.first_run:
+        #     with profiler.profile(with_stack=True, profile_memory=True) as prof:
+        #         out_ = self(batch)
+        #     print(prof.key_averages(group_by_stack_n=5).table(
+        #         sort_by='self_cpu_time_total', row_limit=20))
 
-        else:
-            out_ = self(batch)
+        # else:
+        out_ = self(batch)
 
         logits = out_["logits"]
         encoded = out_["encoded"]
+        projected = out_["projected"]
         codes = out_["codes"]
         codes_mask = out_['codes_mask']
         padding_mask = out_["padding_mask"]
         masked_codes = out_['masked_codes']
         contrastive_matrix_dict = out_['contrastive_matrix_dict']
+        encodec_embeddings = out_['encodec_embeddings']
 
         all_losses, masked_unmasked, per_codebook = self.get_detailed_losses(
             logits[:, :, :, 1:], codes.clone().long(), codes_mask)
         masked_loss = self.masked_loss_ratio * masked_unmasked['masked_loss'] + (
             1-self.masked_loss_ratio) * masked_unmasked['unmasked_loss']
-        contrastive_loss, contrastive_class_loss = self.get_contrastive_loss(
-            encoded, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
+        
+        
+        
+        contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = self.get_contrastive_loss(
+            projected, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
+
+        # weigh the contrastive loss by a factor of self.global_vs_local_contrastive_loss_ratio
+        contrastive_loss = contrastive_global_loss * self.global_vs_local_contrastive_loss_ratio + \
+            contrastive_loss * (1-self.global_vs_local_contrastive_loss_ratio)
+            
+        
 
         for k in all_losses.keys():
-            self.log(k, all_losses[k], sync_dist=True)
+            self.log(k, all_losses[k], sync_dist=True, on_step=True)
 
         for k in masked_unmasked.keys():
-            self.log(k, masked_unmasked[k], sync_dist=True)
+            self.log(k, masked_unmasked[k], sync_dist=True, on_step=True)
 
         for k in per_codebook.keys():
-            self.log(k, per_codebook[k], sync_dist=True)
+            self.log(k, per_codebook[k], sync_dist=True,    on_step=True)
 
         self.log("contrastive loss", contrastive_loss,
-                 prog_bar=True, sync_dist=True)
+                 prog_bar=True, sync_dist=True, on_step=True)
         self.log("contrastive global loss",
-                 contrastive_class_loss, sync_dist=True)
+                 contrastive_global_loss, sync_dist=True, on_step=True)
+        self.log("contrastive class loss",
+                 contrastive_class_loss, sync_dist=True, on_step=True)
+        self.log("contrastive avg loss",
+                 contrastive_avg_loss, sync_dist=True, on_step=True)
 
         self.log("train_crossentropy_simple", masked_loss,
-                 prog_bar=True, sync_dist=True)
-        if self.logger is not None and self.global_step % 1000 == 0:
+                 prog_bar=True, sync_dist=True, on_step=True)
+        
+        self.log("lr", self.trainer.optimizers[0].param_groups[0]['lr'], sync_dist=True, on_step=True)
+        
+        if self.logger is not None:
+            
+            # if self.global_step % 100 == 0:
+            #     # random sample a portion of encodec embeddings along dimension 1
+            #     perm = torch.randperm(encodec_embeddings.shape[1])
+            #     idx = perm[:int(encodec_embeddings.shape[1] * (1-self.transformer_encoder.mask_p))]
+            #     encodec_embeddings = encodec_embeddings[:,idx,:]
+            #     encodec_embeddings = encodec_embeddings.contiguous().view(-1,encodec_embeddings.shape[-1])                
+                
+                
+            #     print("encodec embeddings shape :")
+            #     print(encodec_embeddings.shape)
+                
+                # encodec_embeddings = encodec_embeddings.contiguous().view(-1,encodec_embeddings.shape[-1])
+                
+                # embeddings_sim = self.supconloss.get_similarities(encodec_embeddings)
+                # fig, ax = plt.subplots(1, 1)
+                # ax.imshow(embeddings_sim.detach().cpu().numpy(), cmap="plasma")
+                # self.logger.log_image(
+                #     "frozen encodec embeddings similarity matrix", [wandb.Image(fig)])
+                # plt.close(fig)
 
-            fig, ax = plt.subplots(2, 1)
-            ax[0].imshow(masked_codes[0, :, :20].cpu().numpy(),
-                         vmin=-1000, vmax=1000, cmap="plasma")
-            ax[1].imshow(codes[0, :, :20].cpu().numpy(),
-                         vmin=-1000, vmax=1000, cmap='plasma')
+            if self.global_step % 1000 == 0:
+                fig, ax = plt.subplots(2, 1)
+                ax[0].imshow(masked_codes[0, :, :20].cpu().numpy(),
+                            vmin=-1000, vmax=1000, cmap="plasma")
+                ax[1].imshow(codes[0, :, :20].cpu().numpy(),
+                            vmin=-1000, vmax=1000, cmap='plasma')
 
-            self.logger.log_image(
-                "masked and unmasked tokens", [wandb.Image(fig)])
-            plt.close(fig)
+                self.logger.log_image(
+                    "masked and unmasked tokens", [wandb.Image(fig)])
+                plt.close(fig)
+                
+                
+                fig, ax = plt.subplots(1, 3)
+                ax[0].imshow(
+                    contrastive_matrix_dict['original_contrastive_matrix'].cpu(), cmap="plasma")
+                ax[1].imshow(
+                    contrastive_matrix_dict['contrastive_matrix_masked_blackout'].cpu(), cmap="plasma")
+                ax[2].imshow(
+                    contrastive_matrix_dict['contrastive_matrix_masked_removed'].cpu(), cmap="plasma")
 
-            fig, ax = plt.subplots(1, 3)
-            ax[0].imshow(
-                contrastive_matrix_dict['original_contrastive_matrix'].cpu(), cmap="plasma")
-            ax[1].imshow(
-                contrastive_matrix_dict['contrastive_matrix_masked_blackout'].cpu(), cmap="plasma")
-            ax[2].imshow(
-                contrastive_matrix_dict['contrastive_matrix_masked_removed'].cpu(), cmap="plasma")
+                self.logger.log_image(
+                    "contrastive matrix, masked and unmasked", [wandb.Image(fig)])
+                plt.close(fig)
 
-            self.logger.log_image(
-                "contrastive matrix, masked and unmasked", [wandb.Image(fig)])
-            plt.close(fig)
-
-        loss = self.contrastive_to_masked_ratio * contrastive_loss + \
+        if self.masked_objective:
+             loss = self.contrastive_to_masked_ratio * contrastive_loss + \
             (1-self.contrastive_to_masked_ratio) * masked_loss
+        else:
+            loss = contrastive_loss
+            
+            
         self.first_run = False
 
         return loss
@@ -354,22 +529,17 @@ class MaCHUP(LightningModule):
         out_ = self(batch)
         logits = out_["logits"]
         encoded = out_["encoded"]
+        projected = out_["projected"]
         codes = out_["codes"]
         codes_mask = out_['codes_mask']
         contrastive_matrix_dict = out_['contrastive_matrix_dict']
-
-        # simple_crossentropy = self.cross_entropy_simple(logits[:,:,:,1:],codes.clone().long())
-
-        # loss computations here
-        # per-codebook loss of masked vs non-masked tokens (so 8 parameters total)
-        # contrastive loss - TBD
 
         all_losses, masked_unmasked, per_codebook = self.get_detailed_losses(
             logits[:, :, :, 1:], codes.clone().long(), codes_mask)
         masked_loss = self.masked_loss_ratio * masked_unmasked['masked_loss'] + (
             1-self.masked_loss_ratio) * masked_unmasked['unmasked_loss']
-        contrastive_loss, contrastive_class_loss = self.get_contrastive_loss(
-            encoded, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
+        contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = self.get_contrastive_loss(
+            projected, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
 
         for k in all_losses.keys():
             self.log(k, all_losses[k], sync_dist=True)
@@ -388,11 +558,13 @@ class MaCHUP(LightningModule):
                  contrastive_class_loss, sync_dist=True)
 
         if self.masked_objective:
-            loss = contrastive_loss + masked_loss
-            # this is too simple, some balancing will be needed here when multiple objectives will be combined.
+             loss = self.contrastive_to_masked_ratio * contrastive_loss + \
+            (1-self.contrastive_to_masked_ratio) * masked_loss
         else:
             loss = contrastive_loss
 
+        self.log('overall_loss', loss, prog_bar=False, sync_dist=True)
+        
         return loss
 
     def configure_optimizers(self):
@@ -401,7 +573,12 @@ class MaCHUP(LightningModule):
                 self.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
         else:
             optimizer = self.optimizer(self.parameters())
-        return optimizer
+            
+        scheduler = ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=2, min_lr=1e-6, verbose=True)
+        return {
+                "optimizer": optimizer,
+                "lr_scheduler": scheduler,
+                "monitor": self.reduce_lr_monitor,}
 
     def get_detailed_losses(self, logits, codes, codes_mask):
 
@@ -415,16 +592,16 @@ class MaCHUP(LightningModule):
         masked_loss = loss*codes_mask
         unmasked_loss = loss*(~codes_mask)
 
-        for q in range(Q):
-            all_losses[f'masked_loss_q{q}'] = torch.sum(
-                masked_loss[:, q, :])/torch.sum(codes_mask)
-            all_losses[f'unmasked_loss_q{q}'] = torch.sum(
-                unmasked_loss[:, q, :])/torch.sum(~codes_mask)
-            per_codebook[f'global_loss_q{q}'] = all_losses[f'masked_loss_q{q}'] + \
-                all_losses[f'unmasked_loss_q{q}']
+        codes_mask_sum = torch.sum(codes_mask)
+        inverse_codes_mask_sum = torch.sum(~codes_mask)
 
-        masked_loss = torch.sum(masked_loss)/torch.sum(codes_mask)
-        unmasked_loss = torch.sum(unmasked_loss)/torch.sum(~codes_mask)
+        for q in range(Q):
+            all_losses[f'masked_loss_q{q}'] = torch.sum(masked_loss[:, q, :]) / codes_mask_sum
+            all_losses[f'unmasked_loss_q{q}'] = torch.sum(unmasked_loss[:, q, :]) / inverse_codes_mask_sum
+            per_codebook[f'global_loss_q{q}'] = all_losses[f'masked_loss_q{q}'] + all_losses[f'unmasked_loss_q{q}']
+
+        masked_loss = torch.sum(masked_loss)/codes_mask_sum
+        unmasked_loss = torch.sum(unmasked_loss)/inverse_codes_mask_sum
         masked_unmasked['masked_loss'] = masked_loss
         masked_unmasked['unmasked_loss'] = unmasked_loss
         return all_losses, masked_unmasked, per_codebook

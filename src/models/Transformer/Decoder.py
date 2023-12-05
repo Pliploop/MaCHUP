@@ -67,6 +67,9 @@ class Decoder(nn.Module):
             self.n_codebooks)], dim=1).permute(0, 3, 1, 2)
 
         return logits
+    
+    def finetune_forward(self, embeddings, padding_mask=None):
+        return embeddings
 
     def adapt_sequence_len(self,new_sequence_len):
         self.sequence_len = new_sequence_len

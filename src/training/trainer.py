@@ -22,7 +22,7 @@ class TrainerWrap():
         
 
         if not no_log:
-            logger = WandbLogger(project="MuMRVQ", log_model=True)
+            logger = WandbLogger(project="MuMRVQ", log_model=False)
         else:
             logger = None
 

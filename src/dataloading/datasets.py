@@ -6,7 +6,7 @@ from encodec.utils import convert_audio
 import torch
 import numpy as np
 import soundfile as sf
-from src.dataloading.augmentations import *
+from torch_audiomentations import *
 
 
 class CustomAudioDataset(Dataset):
@@ -52,6 +52,7 @@ class CustomAudioDataset(Dataset):
         return file_paths
 
     def __getitem__(self, idx):
+        
         file_name = self.file_list[idx]
         file_path = os.path.join(self.data_dir, file_name)
 
@@ -60,13 +61,14 @@ class CustomAudioDataset(Dataset):
         info = sf.info(file_path)
         sample_rate = info.samplerate
         n_frames = info.frames
-
-        if n_frames < self.target_n_samples/self.target_sample_rate * sample_rate:
-            return (self[idx+1])
+        
+        
         new_target_n_samples = int(
             self.target_n_samples/self.target_sample_rate * sample_rate)
-        start_idx = np.random.randint(low=0, high=sf.info(
-            file_path).frames - new_target_n_samples)
+
+        if n_frames <= new_target_n_samples:
+            return (self[idx+1])
+        start_idx = np.random.randint(low=0, high=n_frames - new_target_n_samples)
         waveform, sample_rate = sf.read(
             file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
 
@@ -88,9 +90,13 @@ class CustomAudioDataset(Dataset):
         # Do the split here
         waveform = torch.cat(torch.split(
             encodec_audio, self.target_n_samples_one, dim=1)).unsqueeze(1)
-
+        
         if self.augmentations is not None and self.transform and self.train:
             waveform = self.augmentations(waveform)
+            
+        ## end up with a [x_batch, 1, T] tensor
+        
+            
 
         return {
             "wav": waveform,
@@ -116,19 +122,39 @@ class CustomAudioDataModule(pl.LightningDataModule):
         self.target_sample_rate = target_sample_rate
         self.target_length = target_length
 
-        self.train_transforms = ComposeManySplit(
-            [
-                RandomApply([PolarityInversion()], p=0.5),
-                RandomApply(
-                    [Noise(min_snr=0.001, max_snr=0.005)],
-                    p=0.5,
-                ),
-                RandomApply([Gain()], p=0.5),
-                RandomApply(
-                    [HighLowPass(sample_rate=self.target_sample_rate)], p=0.5
-                ),
-            ]
-        )
+        # self.train_transforms = ComposeManySplit(
+        #     [
+        #         RandomApply([PolarityInversion()], p=0.5),
+        #         RandomApply(
+        #             [Noise(min_snr=0.001, max_snr=0.005)],
+        #             p=0.5,
+        #         ),
+        #         RandomApply([Gain()], p=0.5),
+        #         RandomApply(
+        #             [HighLowPass(sample_rate=self.target_sample_rate)], p=0.5
+        #         ),
+        #     ]
+        # )
+        
+        self.train_transforms = Compose(
+                [
+                    Gain(
+                        min_gain_in_db=-15.0,
+                        max_gain_in_db=5.0,
+                        p=0.4,
+                        sample_rate=24000
+                    ),
+                    PolarityInversion(p=0.6, sample_rate=24000),
+                    AddColoredNoise(p=0.3, sample_rate=24000),
+                    PitchShift(p=0.3, sample_rate = 24000),
+                    OneOf([
+                        BandPassFilter(p=0.3, sample_rate = 24000),
+                        BandStopFilter(p=0.3, sample_rate = 24000),
+                        HighPassFilter(p=0.3, sample_rate = 24000),
+                        LowPassFilter(p=0.3, sample_rate = 24000),
+                    ])
+                ]
+            )
 
         self.val_transforms = None
 
@@ -147,4 +173,4 @@ class CustomAudioDataModule(pl.LightningDataModule):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)

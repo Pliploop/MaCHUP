@@ -137,14 +137,7 @@ class Encoder(nn.Module):
         
     def adapt_sequence_len(self,new_sequence_len):
         self.sequence_len = new_sequence_len
-        # if self.position_encoder == "sinusoidal":
-        #     self.position_encoder = PositionalEncoding(
-        #         self.d_model, max_len=self.sequence_len
-        #     )
-        # else:
-        #     self.position_encoder = LearnedPositionalEncoding(
-        #         self.d_model, max_len=self.sequence_len
-        #     )
+        
 
     def forward(self, codes, padding_mask=None, mask_before=False, mask=True, contrastive_matrix = None):
         # indices is of shape B,n_q,T
@@ -166,7 +159,6 @@ class Encoder(nn.Module):
                 )
 
         original_embeddings = self.emb(codes)  # B,T,d_model
-        original_embeddings = self.position_encoder(original_embeddings) # B,T,d_model
 
         if not mask_before and mask:
                 input_,masked_idx,retained_idx,retained_padding_mask,codes_mask, contrastive_matrix, contrastive_matrix_blackout, contrastive_matrix_masked = self.mask_after(
@@ -189,6 +181,7 @@ class Encoder(nn.Module):
         codes = codes.clone()
         codes[codes_mask] = self.mask_special_token
         
+        
         if self.first_run:
             print("============== codes_masking ==============")
             print(codes_mask)
@@ -202,9 +195,7 @@ class Encoder(nn.Module):
         retained_padding_mask = torch.cat([torch.zeros(B, 1, device=retained_padding_mask.device),retained_padding_mask,],dim=1)
         padding_mask = torch.cat([torch.zeros(B, 1, device=retained_padding_mask.device),padding_mask], dim=1)
         input_ = torch.cat([class_token, input_], dim=1)
-        ## Deal with contrastive matrix here
-        
-        
+        input_ = self.position_encoder(input_) # B,T,d_model
         input_ = self.norm_in(input_)
         output_ = self.transformer(input_, src_key_padding_mask=retained_padding_mask)
         # shape B,T+1,d_model
@@ -251,19 +242,63 @@ class Encoder(nn.Module):
 
         return output_, unmasked_output, codes_mask, padding_mask, contrastive_matrix_dict
     
+    def finetune_forward(self,codes, padding_mask=None):
+        # a simpler forward for finetuning where no masking and unmasking, no contrastive matrix is needed
+        
+        # indices is of shape B,n_q,T
+        B, K, T = codes.shape
+        
+        
+        original_embeddings = self.emb(codes)  # B,T,d_model
+        class_token = self.class_token.expand(B, 1, self.d_model)  # Expand class token for batch
+        codes = codes.clone()
+
+        # shape B,T,d_model
+        input_ = torch.cat([class_token, original_embeddings], dim=1)
+        input_ = self.position_encoder(input_) # B,T,d_model
+        padding_mask = torch.cat([torch.zeros(B, 1, device=padding_mask.device),padding_mask], dim=1)
+        input_ = self.norm_in(input_)
+        output_ = self.transformer(input_, src_key_padding_mask=padding_mask)
+        
+        if self.first_run:
+            print("shape coming out of encoder: ============")
+            print(output_.shape)
+            print(output_.isnan().any())
+            print(output_.isinf().any())
+            print(output_.isneginf().any())
+
+
+        if self.first_run:
+            print("========= All outputs for the encoder========")
+            print("-------- masked output with class token --------")
+            print(output_.shape)
+            print(
+                "-------- unmasked output with class token and original embeddingd without class token --------"
+            )
+        self.first_run = False
+
+
+        return output_, None, None, padding_mask, None
+        
+    
     def expand_contrastive_matrix(self, contrastive_matrix = None, device = None):
+        
         matrix = contrastive_matrix[0]
         B, N, T, W = contrastive_matrix[1]
         new_size = B * N * (T + 1)
         new_matrix = torch.zeros(new_size, new_size, device = device)
 
-        # Create indices for block assignment
-        indices = torch.arange(0, B * N * T, T)
-        delays = indices // T + 1
-        for k, delay in zip(indices, delays):
-            new_matrix[k + delay : k + delay + T, k + delay : k + delay + T] = matrix[k : k + T, k : k + T]
+        if T > 0:
+            # Create indices for block assignment
+            indices = torch.arange(0, B * N * T, T)
+            delays = indices // T + 1
+            for k, delay in zip(indices, delays):
+                new_matrix[k + delay : k + delay + T, k + delay : k + delay + T] = matrix[k : k + T, k : k + T]
 
-        indices = torch.arange(0, B * N * (T + 1), T + 1, device = device)
+            indices = torch.arange(0, B * N * (T + 1), T + 1, device = device)
+        else:
+            indices = torch.arange(0, B * N, 1, device = device)
+
         i_indices, j_indices = torch.meshgrid(indices, indices)
         mask = (i_indices // ((T + 1) * N)) == (j_indices // ((T + 1) * N))
         new_matrix[i_indices[mask], j_indices[mask]] = 2

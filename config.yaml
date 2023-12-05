@@ -1,5 +1,5 @@
 # pytorch_lightning==2.1.0
-seed_everything: 123
+seed_everything: 546
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
@@ -26,7 +26,7 @@ trainer:
   enable_checkpointing: false
   enable_progress_bar: true
   enable_model_summary: true
-  accumulate_grad_batches: 1
+  accumulate_grad_batches: 4
   gradient_clip_val: 1
   gradient_clip_algorithm: null
   deterministic: warn
@@ -42,7 +42,7 @@ trainer:
   default_root_dir: null
 model:
   encoder:
-    class_path: src.models.Transformer.Encoder.VanillaEncoder
+    class_path: src.models.VanillaEncoder
     init_args:
       n_codebooks: 4
       embedding_size:
@@ -53,13 +53,13 @@ model:
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
-      layers: 10
-      n_heads: 16
-      p: 0.9
+      layers: 8
+      n_heads: 8
+      p: 0
       batched_mask: false
       mask_special_token: 1025
   decoder:
-    class_path: src.models.Transformer.Decoder.VanillaDecoder
+    class_path: src.models.VanillaDecoder
     init_args:
       embedding_size:
       - 256
@@ -70,7 +70,7 @@ model:
       n_heads: 8
       position_encoder: sinusoidal
   encodec:
-    class_path: src.models.Encodec.Encodec
+    class_path: src.models.Encodec
     init_args:
       frozen: true
       model_bandwidth: 3
@@ -89,29 +89,33 @@ model:
       capturable: false
       differentiable: false
       fused: null
-  pattern: none
   n_codebooks: 4
   sequence_len: 100
-  pattern_special_token: 1024
   mask_special_token: 1025
   pad_special_token: 1026
   mask_before: false
   debug: false
-  masked_loss_ratio: 0
-  masked_objective: true
-  window_size: 75
+  masked_loss_ratio: 1
+  masked_objective: false
+  window_size: 150
   adapt_sequence_len: true
+  contrastive_to_masked_ratio: 1
+  global_vs_local_contrastive_loss_ratio: 0
+  global_class_vs_average_contrastive_loss_ratio: 1
+  contrastive_temperature: 0.5
+  reduce_lr_monitor: overall_loss
+  only_global_contrastive: true
 data:
-  train_data_dir: /import/research_c4dm/JulienMarcoChrisRMRI/MTAT_wav
+  train_data_dir: /import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/wav
   val_data_dir: null
   batch_size: 8
   num_workers: 64
   target_sample_rate: 24000
-  target_length: 5
+  target_length: 10
   validation_split: 0.1
   n_augmentations: 4
-  transform: false
-  sanity_check_n: 32
+  transform: true
+  sanity_check_n: null
 log: 'true'
-log_model: true
+log_model: false
 ckpt_path: MuMRVQ
