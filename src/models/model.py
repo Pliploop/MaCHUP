@@ -32,14 +32,16 @@ class MaCHUP(LightningModule):
         debug=False,
         masked_loss_ratio=0.9,
         masked_objective=True,
+        contrastive_objective = True,
         window_size=50,
         adapt_sequence_len=True,
         contrastive_to_masked_ratio=0.5,
         global_vs_local_contrastive_loss_ratio=0.1,
         global_class_vs_average_contrastive_loss_ratio=1,
         contrastive_temperature = 0.5,
-        reduce_lr_monitor = 'overall_loss',
+        reduce_lr_monitor = 'masked loss',
         only_global_contrastive = False,
+        use_encodec_embedddings = False,
         *args,
         **kwargs,
     ) -> None:
@@ -51,20 +53,30 @@ class MaCHUP(LightningModule):
         self.sequence_len = sequence_len
         self.window_size = window_size
         self.adapt_sequence_len = adapt_sequence_len
+        
+        
+        
+        # loss flag and triggers
         self.contrastive_to_masked_ratio = contrastive_to_masked_ratio
         self.global_vs_local_contrastive_loss_ratio = global_vs_local_contrastive_loss_ratio
         self.global_class_vs_average_contrastive_loss_ratio = global_class_vs_average_contrastive_loss_ratio
         self.reduce_lr_monitor = reduce_lr_monitor
         self.only_global_contrastive = only_global_contrastive
         self.masked_loss_ratio = masked_loss_ratio
+        
+        
+        self.use_encodec_embedddings = use_encodec_embedddings
 
-        self.mask_special_token = mask_special_token
-        self.pad_special_token = pad_special_token
 
         self.mask_before = mask_before
         self.masked_objective = masked_objective
+        self.contrastive_objective = contrastive_objective
         self.optimizer = optimizer
         self.first_run = True
+        
+        self.mask_special_token = mask_special_token
+        self.pad_special_token = pad_special_token
+
 
         self.supconloss = MySupConLoss(temperature=contrastive_temperature)
         self.extended_batch_size = 0
@@ -75,6 +87,8 @@ class MaCHUP(LightningModule):
             nn.ReLU(),
             nn.Linear(self.d_model, 128)
         )
+        
+        self.contrastive_matrix = None
         
 
     def forward(self, x):
@@ -94,14 +108,12 @@ class MaCHUP(LightningModule):
         if self.first_run:
             print(f'tensor shape before augmentation batching: {wav.shape}')
 
-        # wav = wav.permute(1, 0, 2,3).contiguous().view(N * B, channels, T)
         wav = wav.contiguous().view(N*B, channels, T)
 
         if self.first_run:
             print(f'tensor shape after augmentation batching: {wav.shape}')
 
-        codes = self.encodec(wav)  # SHAPE : [B * N, n_q, T]
-        embeddings = self.encodec.model.encoder(wav).squeeze().permute(0,2,1)  # SHAPE : [B * N, T, d_encodec]
+        codes, embeddings = self.get_encodec_output(wav)
 
         if self.adapt_sequence_len and self.first_run:
             self.transformer_encoder.adapt_sequence_len(codes.shape[-1])
@@ -129,7 +141,7 @@ class MaCHUP(LightningModule):
         else:
             T = codes.shape[-1]
 
-        if self.first_run or T*B*N != self.extended_batch_size:
+        if (self.first_run or T*B*N != self.extended_batch_size) and self.contrastive_objective:
             print(f'creating contrastive matrix for batch size {B*N} and sequence length {codes.shape[-1]}')
             print(f'previous batch size was {self.extended_batch_size}')
             
@@ -140,7 +152,9 @@ class MaCHUP(LightningModule):
             codes=codes,
             padding_mask=padding_mask,
             mask_before=self.mask_before,
-            contrastive_matrix=self.contrastive_matrix
+            contrastive_matrix=self.contrastive_matrix,
+            embeddings = embeddings,
+            use_embeddings = self.use_encodec_embedddings
         )
         
         codes = codes.clone()
@@ -150,8 +164,6 @@ class MaCHUP(LightningModule):
         # purely for logging and visual purposes
         masked_codes[codes_mask] = -1000
 
-        # keep encoded for Contrastive loss
-
         decoded_logits = self.transformer_decoder(
             unmasked_encoded, padding_mask=encoded_padding_mask
         )  # SHAPE : [B,n_q,T,card]
@@ -159,15 +171,16 @@ class MaCHUP(LightningModule):
         projected = self.proj_head(encoded)
 
         return {
-            "logits": decoded_logits,
-            "encoded": encoded,
-            "projected": projected,
+            
+            "encodec_embeddings" : embeddings,
             "codes": codes,
             "masked_codes": masked_codes,
             "codes_mask": codes_mask,
             "padding_mask": padding_mask,
+            "encoded": encoded,
+            "projected": projected,
+            "logits": decoded_logits,
             "contrastive_matrix_dict": contrastive_matrix_dict,
-            "encodec_embeddings" : embeddings
         }
         
     def finetune_forward(self, x):
@@ -186,12 +199,7 @@ class MaCHUP(LightningModule):
         if self.first_run:
             print(f'tensor shape before augmentation batching: {wav.shape}')
 
-
-        if self.first_run:
-            print(f'tensor shape after augmentation batching: {wav.shape}')
-
-        codes = self.encodec(wav)  # SHAPE : [B * N, n_q, T]
-        embeddings = self.encodec.model.encoder(wav).squeeze().permute(0,2,1)  # SHAPE : [B * N, T, d_encodec]
+        codes, embeddings = self.get_encodec_output(wav)
 
         if self.adapt_sequence_len and self.first_run:
             self.transformer_encoder.adapt_sequence_len(codes.shape[-1])
@@ -226,12 +234,14 @@ class MaCHUP(LightningModule):
         decoded_logits = self.transformer_decoder.finetune_forward(
             encoded, padding_mask=encoded_padding_mask
         )  # SHAPE : [B,n_q,T,card]
-
-        # keep decoded for contrastive loss
-        # cross-entropy between codes and decoded/encoded
-        self.first_run = False
+        
+        
+        
         
         projected = self.proj_head(encoded)
+        
+
+        self.first_run = False
 
         return {
             "logits": decoded_logits,
@@ -241,7 +251,12 @@ class MaCHUP(LightningModule):
             "padding_mask": padding_mask,
             "encodec_embeddings" : embeddings
         }
+
+    def get_encodec_output(self,wav):
+        codes = self.encodec(wav)  # SHAPE : [B * N, n_q, T]
+        embeddings = self.encodec.model.encoder(wav).squeeze().permute(0,2,1)  # SHAPE : [B * N, T, d_encodec]
         
+        return codes,embeddings
 
     def create_padding_mask(self, codes, original_lens):
         padding_mask = torch.zeros(
@@ -434,12 +449,15 @@ class MaCHUP(LightningModule):
         
         
         
-        contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = self.get_contrastive_loss(
-            projected, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
+        if self.contrastive_objective:
+            contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = self.get_contrastive_loss(
+                projected, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
 
-        # weigh the contrastive loss by a factor of self.global_vs_local_contrastive_loss_ratio
-        contrastive_loss = contrastive_global_loss * self.global_vs_local_contrastive_loss_ratio + \
-            contrastive_loss * (1-self.global_vs_local_contrastive_loss_ratio)
+            # weigh the contrastive loss by a factor of self.global_vs_local_contrastive_loss_ratio
+            contrastive_loss = contrastive_global_loss * self.global_vs_local_contrastive_loss_ratio + \
+                contrastive_loss * (1-self.global_vs_local_contrastive_loss_ratio)
+        else:
+            contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = 0, 0, 0, 0
             
         
 
@@ -461,7 +479,7 @@ class MaCHUP(LightningModule):
         self.log("contrastive avg loss",
                  contrastive_avg_loss, sync_dist=True, on_step=True)
 
-        self.log("train_crossentropy_simple", masked_loss,
+        self.log("masked loss", masked_loss,
                  prog_bar=True, sync_dist=True, on_step=True)
         
         self.log("lr", self.trainer.optimizers[0].param_groups[0]['lr'], sync_dist=True, on_step=True)
@@ -499,18 +517,18 @@ class MaCHUP(LightningModule):
                     "masked and unmasked tokens", [wandb.Image(fig)])
                 plt.close(fig)
                 
-                
-                fig, ax = plt.subplots(1, 3)
-                ax[0].imshow(
-                    contrastive_matrix_dict['original_contrastive_matrix'].cpu(), cmap="plasma")
-                ax[1].imshow(
-                    contrastive_matrix_dict['contrastive_matrix_masked_blackout'].cpu(), cmap="plasma")
-                ax[2].imshow(
-                    contrastive_matrix_dict['contrastive_matrix_masked_removed'].cpu(), cmap="plasma")
+                if self.contrastive_objective:
+                    fig, ax = plt.subplots(1, 3)
+                    ax[0].imshow(
+                        contrastive_matrix_dict['original_contrastive_matrix'].cpu(), cmap="plasma")
+                    ax[1].imshow(
+                        contrastive_matrix_dict['contrastive_matrix_masked_blackout'].cpu(), cmap="plasma")
+                    ax[2].imshow(
+                        contrastive_matrix_dict['contrastive_matrix_masked_removed'].cpu(), cmap="plasma")
 
-                self.logger.log_image(
-                    "contrastive matrix, masked and unmasked", [wandb.Image(fig)])
-                plt.close(fig)
+                    self.logger.log_image(
+                        "contrastive matrix, masked and unmasked", [wandb.Image(fig)])
+                    plt.close(fig)
 
         if self.masked_objective:
              loss = self.contrastive_to_masked_ratio * contrastive_loss + \
@@ -538,9 +556,20 @@ class MaCHUP(LightningModule):
             logits[:, :, :, 1:], codes.clone().long(), codes_mask)
         masked_loss = self.masked_loss_ratio * masked_unmasked['masked_loss'] + (
             1-self.masked_loss_ratio) * masked_unmasked['unmasked_loss']
-        contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = self.get_contrastive_loss(
-            projected, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
+        
+        
+        
+        if self.contrastive_objective:
+            contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = self.get_contrastive_loss(
+                projected, contrastive_matrix_dict['contrastive_matrix_masked_removed'])
 
+            # weigh the contrastive loss by a factor of self.global_vs_local_contrastive_loss_ratio
+            contrastive_loss = contrastive_global_loss * self.global_vs_local_contrastive_loss_ratio + \
+                contrastive_loss * (1-self.global_vs_local_contrastive_loss_ratio)
+        else:
+            contrastive_loss, contrastive_global_loss, contrastive_class_loss, contrastive_avg_loss = 0, 0, 0, 0
+            
+            
         for k in all_losses.keys():
             self.log(k, all_losses[k], sync_dist=True)
 
@@ -574,7 +603,7 @@ class MaCHUP(LightningModule):
         else:
             optimizer = self.optimizer(self.parameters())
             
-        scheduler = ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=2, min_lr=1e-6, verbose=True)
+        scheduler = ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=3, min_lr=1e-6, verbose=True)
         return {
                 "optimizer": optimizer,
                 "lr_scheduler": scheduler,

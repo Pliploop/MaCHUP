@@ -1,5 +1,5 @@
 # pytorch_lightning==2.1.0
-seed_everything: 546
+seed_everything: 112
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
@@ -26,7 +26,7 @@ trainer:
   enable_checkpointing: false
   enable_progress_bar: true
   enable_model_summary: true
-  accumulate_grad_batches: 4
+  accumulate_grad_batches: 1
   gradient_clip_val: 1
   gradient_clip_algorithm: null
   deterministic: warn
@@ -53,9 +53,9 @@ model:
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
-      layers: 8
-      n_heads: 8
-      p: 0
+      layers: 10
+      n_heads: 16
+      p: 0.5
       batched_mask: false
       mask_special_token: 1025
   decoder:
@@ -67,7 +67,7 @@ model:
       - 64
       - 64
       layers: 2
-      n_heads: 8
+      n_heads: 16
       position_encoder: sinusoidal
   encodec:
     class_path: src.models.Encodec
@@ -75,46 +75,48 @@ model:
       frozen: true
       model_bandwidth: 3
   optimizer:
-    class_path: torch.optim.AdamW
+    class_path: torch.optim.Adam
     init_args:
-      lr: 0.0001
+      lr: 0.0002
       betas:
       - 0.9
       - 0.999
       eps: 1.0e-08
-      weight_decay: 0.0
+      weight_decay: 0.0001
       amsgrad: false
-      maximize: false
       foreach: null
+      maximize: false
       capturable: false
       differentiable: false
       fused: null
   n_codebooks: 4
-  sequence_len: 100
+  sequence_len: 1024
   mask_special_token: 1025
   pad_special_token: 1026
   mask_before: false
   debug: false
-  masked_loss_ratio: 1
-  masked_objective: false
+  masked_loss_ratio: 0.9
+  masked_objective: true
+  contrastive_objective: false
   window_size: 150
   adapt_sequence_len: true
-  contrastive_to_masked_ratio: 1
+  contrastive_to_masked_ratio: 0
   global_vs_local_contrastive_loss_ratio: 0
   global_class_vs_average_contrastive_loss_ratio: 1
-  contrastive_temperature: 0.5
-  reduce_lr_monitor: overall_loss
+  contrastive_temperature: 0.3
+  reduce_lr_monitor: masked loss
   only_global_contrastive: true
+  use_encodec_embedddings: false
 data:
   train_data_dir: /import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/wav
   val_data_dir: null
-  batch_size: 8
+  batch_size: 24
   num_workers: 64
   target_sample_rate: 24000
   target_length: 10
   validation_split: 0.1
-  n_augmentations: 4
-  transform: true
+  n_augmentations: 2
+  transform: false
   sanity_check_n: null
 log: 'true'
 log_model: false

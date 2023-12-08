@@ -33,10 +33,7 @@ class MySupConLoss(nn.Module):
         negative_mask = negative_mask * self_contrast
         
     
-        original_cosim = self.get_similarities(features=features)
-        # logits_max, _ = torch.max(original_cosim, dim=1, keepdim=True)
-        # original_cosim = original_cosim - logits_max.detach()
-        
+        original_cosim = self.get_similarities(features=features)       
         
         
         positives = original_cosim * positive_mask
@@ -52,22 +49,9 @@ class MySupConLoss(nn.Module):
         
         positive_cardinal = positive_mask.sum(1)
         
-        log_prob = positives - log_negatives_summed
+        log_prob = log_prob / positive_cardinal
     
-        # positive_cardinal = positive_mask.sum(1)
-        # positive_cardinal[positive_cardinal == 0] = 1
         
-        
-        
-        # print(positive_cardinal)
-        # print(positives_negged.sum(1))
-        
-        # log_prob_sum = (log_prob * positive_mask).sum(1)
-        
-        # print an error warning if positive_cardinal has a zero element
-        
-        
-        # loss = - log_prob_sum/positive_cardinal
         
         loss = - log_prob.mean()
         return loss

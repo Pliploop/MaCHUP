@@ -32,9 +32,10 @@ class EmptyPatternProvider(CodebooksPatternProvider):
 
 class PositionalEncoding(LightningModule):
 
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 1024):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 1024, batch_first: bool = True):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
+        self.batch_first = batch_first
 
         position = torch.arange(max_len).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2)
@@ -49,8 +50,12 @@ class PositionalEncoding(LightningModule):
         Arguments:
             x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
         """
-        x = x + self.pe[:x.size(0)]
+        if self.batch_first:
+            x = x + self.pe.transpose(0,1)[:,:x.size(1),:]
+        else:
+            x = x + self.pe[:x.size(0)]
         return self.dropout(x)
+        
 
 
 class LearnedPositionalEncoding(LightningModule):

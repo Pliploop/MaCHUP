@@ -64,7 +64,7 @@ class MaCHUPFinetune(LightningModule):
         checkpoint_path: str = None,
         task = "GTZAN",
         target_layer = "transformer_encoder",
-        freeze_encoder = True,
+        freeze_encoder = False,
         use_global_representation = "class",
         *args,
         **kwargs,

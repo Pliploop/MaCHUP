@@ -9,7 +9,7 @@ trainer:
   logger: null
   callbacks: null
   fast_dev_run: false
-  max_epochs: 100
+  max_epochs: 1000
   min_epochs: null
   max_steps: -1
   min_steps: null
@@ -43,15 +43,19 @@ trainer:
 model:
   task: GTZAN
   target_layer: transformer_encoder
-  freeze_encoder: true
+  freeze_encoder: false
   checkpoint_path: null
-  use_global_representation: class
+  use_global_representation: avg
+  optimizer:
+    class_path: torch.optim.AdamW
+    init_args:
+      lr: 0.0001
   
 data:
   train_data_dir: "/import/c4dm-datasets/gtzan_torchaudio/genres"
   val_data_dir: null
   batch_size: 16
-  num_workers: 64
+  num_workers: 16
   target_sample_rate: 24000
   target_length: 10
   n_augmentations: 1

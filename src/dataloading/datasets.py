@@ -57,35 +57,26 @@ class CustomAudioDataset(Dataset):
         file_path = os.path.join(self.data_dir, file_name)
 
         # waveform, sample_rate = torchaudio.load(file_path)
+        try:
+            info = sf.info(file_path)
+            sample_rate = info.samplerate
+            n_frames = info.frames
+            
+            
+            new_target_n_samples = int(
+                self.target_n_samples/self.target_sample_rate * sample_rate)
 
-        info = sf.info(file_path)
-        sample_rate = info.samplerate
-        n_frames = info.frames
-        
-        
-        new_target_n_samples = int(
-            self.target_n_samples/self.target_sample_rate * sample_rate)
-
-        if n_frames <= new_target_n_samples:
+            if n_frames <= new_target_n_samples:
+                return (self[idx+1])
+            start_idx = np.random.randint(low=0, high=n_frames - new_target_n_samples)
+            waveform, sample_rate = sf.read(
+                file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
+        except:
             return (self[idx+1])
-        start_idx = np.random.randint(low=0, high=n_frames - new_target_n_samples)
-        waveform, sample_rate = sf.read(
-            file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
 
         waveform = torch.Tensor(waveform.transpose())
         encodec_audio = convert_audio(
             waveform, sample_rate, self.target_sample_rate, 1)
-
-        # empty = torch.zeros(1,self.target_n_samples)
-
-        # if encodec_audio.shape[-1] > self.target_n_samples:
-        #     start = np.random.randint(low=0,high=encodec_audio.shape[-1] - self.target_n_samples)
-        #     empty = encodec_audio[:,start:start+self.target_n_samples]
-        #     original_len = self.target_n_samples
-        # else:
-        #     # empty[:,:encodec_audio.shape[-1]] = encodec_audio
-        #     # original_len = encodec_audio.shape[-1]
-        #     return self[idx+1]
 
         # Do the split here
         waveform = torch.cat(torch.split(
@@ -122,20 +113,6 @@ class CustomAudioDataModule(pl.LightningDataModule):
         self.target_sample_rate = target_sample_rate
         self.target_length = target_length
 
-        # self.train_transforms = ComposeManySplit(
-        #     [
-        #         RandomApply([PolarityInversion()], p=0.5),
-        #         RandomApply(
-        #             [Noise(min_snr=0.001, max_snr=0.005)],
-        #             p=0.5,
-        #         ),
-        #         RandomApply([Gain()], p=0.5),
-        #         RandomApply(
-        #             [HighLowPass(sample_rate=self.target_sample_rate)], p=0.5
-        #         ),
-        #     ]
-        # )
-        
         self.train_transforms = Compose(
                 [
                     Gain(
