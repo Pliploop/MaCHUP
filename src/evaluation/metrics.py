@@ -3,7 +3,7 @@
 import torch
 import numpy as np
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix, average_precision_score
 
 def accuracy_score_multiclass(y_true, y_pred):
     """
@@ -13,6 +13,8 @@ def accuracy_score_multiclass(y_true, y_pred):
     #y_pred are logits
     y_pred = y_pred.cpu().detach().numpy()
     y_pred = np.argmax(y_pred, axis=1)
+    
+    
     
     return accuracy_score(y_true, y_pred)
 
@@ -51,7 +53,12 @@ def roc_auc_score_multiclass(y_true, y_pred):
     """
     y_true = y_true.cpu().numpy()
     y_pred = y_pred.cpu().detach().numpy()
-    y_pred = np.argmax(y_pred, axis=1)
+    # deal with cases where there is only one class in y_true along the batch dimension
+    
+    
+    
+    
+    
     return roc_auc_score(y_true, y_pred, multi_class='ovo')
 
 def confusion_matrix_multiclass(y_true, y_pred):
@@ -60,5 +67,13 @@ def confusion_matrix_multiclass(y_true, y_pred):
     """
     y_true = y_true.cpu().numpy()
     y_pred = y_pred.cpu().detach().numpy()
-    y_pred = np.argmax(y_pred, axis=1)
     return confusion_matrix(y_true, y_pred)
+
+
+def average_precision_score_multiclass(y_true, y_pred):
+    """
+    Calculates the average precision score of the predictions for multiclass classification
+    """
+    y_true = y_true.cpu().numpy()
+    y_pred = y_pred.cpu().detach().numpy()
+    return average_precision_score(y_true, y_pred, average='macro')

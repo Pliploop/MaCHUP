@@ -3,8 +3,7 @@ seed_everything: 123
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
-  devices: 1
-
+  devices: [7]
   num_nodes: 1
   precision: null
   logger: null
@@ -27,7 +26,7 @@ trainer:
   enable_checkpointing: false
   enable_progress_bar: true
   enable_model_summary: true
-  accumulate_grad_batches: 1
+  accumulate_grad_batches: 2
   gradient_clip_val: 1
   gradient_clip_algorithm: null
   deterministic: warn
@@ -48,26 +47,25 @@ model:
       n_codebooks: 4
       embedding_size:
         - 256
+        - 256
         - 128
-        - 64
-        - 64
+        - 128
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
       sequence_len: 2048
       layers: 10
       n_heads: 16
-      p: 0
+      p: 0.5
       batched_mask: false
-      mask_special_token: 1025
   decoder:
     class_path: src.models.Transformer.Decoder.VanillaDecoder
     init_args:
       embedding_size:
         - 256
+        - 256
         - 128
-        - 64
-        - 64
+        - 128
       position_encoder: sinusoidal
       embedding_behaviour: concat
       layers: 2
@@ -83,16 +81,15 @@ model:
       weight_decay: 0.0001
   n_codebooks: 4
   sequence_len: 1024 # specify the sequence length of the input. Can toggle sequence length adaptation in the model to prevent padding.
-  mask_special_token: 1025
-  pad_special_token: 1026
   mask_before: false
   debug: false
-  masked_loss_ratio: 0.9 # when 1, only masked tokens are counted for the MLM loss
-  contrastive_to_masked_ratio: 0 #when 1, only the contrastive loss is counted. When 0, only the masked loss is counted
+  use_embeddings: true
+  masked_loss_ratio: 0.8 # when 1, only masked tokens are counted for the MLM loss
+  contrastive_to_masked_ratio: 1 #when 1, only the contrastive loss is counted. When 0, only the masked loss is counted
   global_vs_local_contrastive_loss_ratio: 0 # when 1, only the global contrastive loss is counted. When 0, only the local contrastive loss is counted
   global_class_vs_average_contrastive_loss_ratio: 1 # when 1, the class tokens are used for global contrastive loss. when 0, the average of the sequence is used.
   masked_objective: true # whether or not to use the masked objective
-  contrastive_objective: false # whether or not to use the contrastive objective
+  contrastive_objective: true # whether or not to use the contrastive objective
   window_size: 150 # window size for local contrastive loss, 75 = 1s
   contrastive_temperature: 0.3 # temperature for contrastive loss
   only_global_contrastive: true # different than global_vs_local_contrastive_loss_ratio. When true, designed to free up memory by using only the class contrastive matrix for unmasked sequences, making this an SBERT problem.
@@ -101,13 +98,14 @@ model:
     init_args:
       frozen: true
       model_bandwidth: 3
+      sample_rate: 24000
 data:
   train_data_dir: "/import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/wav"
   val_data_dir: null
-  batch_size: 24
-  num_workers: 64
+  batch_size: 32
+  num_workers: 32
   target_sample_rate: 24000
-  target_length: 10
+  target_length: 6
   n_augmentations: 2
   validation_split: 0.1
   transform: false
@@ -115,3 +113,5 @@ data:
 log: false ## whether or not to log in wandb
 log_model: false
 ckpt_path: "MuMRVQ"
+resume_from_checkpoint: null
+resume_id: null

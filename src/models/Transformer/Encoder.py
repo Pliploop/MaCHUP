@@ -66,7 +66,6 @@ class Encoder(nn.Module):
         n_heads=8,
         p=0.5,
         batched_mask=False,
-        mask_special_token=1025,
         *args,
         **kwargs,
     ) -> None:
@@ -78,7 +77,8 @@ class Encoder(nn.Module):
 
         self.card = card
         self.sequence_len = sequence_len
-        self.mask_special_token = mask_special_token
+        self.mask_special_token = self.card + 1
+        self.pad_special_token = self.card + 2
         self.position_encoder = position_encoder
 
         if self.embedding_behaviour == "concat":
@@ -114,11 +114,9 @@ class Encoder(nn.Module):
         self.transformer = None
 
         self.norm_in = LayerNorm(self.d_model)
-
         self.class_token = nn.Parameter(torch.randn(1, 1, self.d_model))
         self.mask_token = nn.Parameter(torch.randn(self.d_model))
-        self.encoder_mask_emb = nn.Parameter(
-            torch.FloatTensor(self.d_model).uniform_())
+        self.encoder_mask_emb = nn.Parameter(torch.FloatTensor(self.d_model).uniform_())
         self.mask_p = p
         self.batched_mask = batched_mask
 
@@ -133,6 +131,7 @@ class Encoder(nn.Module):
         self.first_run = True
         
         self.proj = nn.Linear(128, self.d_model)
+        self.decoder_proj = nn.Linear(self.d_model, self.d_model)
 
     def adapt_sequence_len(self, new_sequence_len):
         self.sequence_len = new_sequence_len
@@ -148,19 +147,14 @@ class Encoder(nn.Module):
         else:
             original_contrastive_matrix = None
 
-        # here,contrasitve_matrix is a tuple with (Matrix, original shape)
-        # because the original shape is needed for adding the class token
-
-        # masking before, i.e all timesteps are sent to be encoded but allows for structured masking algos.
-        if mask_before and mask:
-            masked_idx, retained_idx, retained_padding_mask, codes, codes_mask, contrastive_matrix, contrastive_matrix_blackout, contrastive_matrix_masked = self.mask_before(
-                padding_mask=padding_mask, codes=codes, contrastive_matrix=contrastive_matrix
-            )
-
         if not use_embeddings:
+           
             original_embeddings = self.emb(codes)  # B,T,d_model
         else:
             original_embeddings = self.proj(embeddings) # B,T,d_model
+            
+            if self.first_run:
+                print("encodec embeddings: {}".format(original_embeddings.shape))
             
             
         class_token = self.class_token.expand(
@@ -199,13 +193,16 @@ class Encoder(nn.Module):
         # shape B,T+1,d_model
         
         input_ = self.norm_in(input_)
-        output_ = self.transformer(
+        encoded = self.transformer(
             input_, src_key_padding_mask=retained_padding_mask)
         # shape B,T+1,d_model
 
         if self.first_run:
             print("shape coming out of encoder: ============")
-            print(output_.shape)
+            print(encoded.shape)
+            
+        output_ = self.decoder_proj(encoded) ## to not share the output latent space with the decoder input space
+        # TODO move this to inside of the decoder
 
         unmasked_output = self.unmask(
             embeddings=output_,
@@ -213,7 +210,7 @@ class Encoder(nn.Module):
             masked_idx=masked_idx,
             retained_idx=retained_idx,
             retained_padding_mask=retained_padding_mask,
-        )
+        ) # TODO move this to outisde of the encoder
 
         if self.first_run:
             print("========= All outputs for the encoder========")
@@ -240,13 +237,19 @@ class Encoder(nn.Module):
 
         return output_, unmasked_output, codes_mask, padding_mask, contrastive_matrix_dict
 
-    def finetune_forward(self, codes, padding_mask=None):
+    def finetune_forward(self, codes, padding_mask=None, use_embeddings=False, embeddings = None):
         # a simpler forward for finetuning where no masking and unmasking, no contrastive matrix is needed
 
         # indices is of shape B,n_q,T
         B, K, T = codes.shape
 
-        original_embeddings = self.emb(codes)  # B,T,d_model
+        if use_embeddings:
+            original_embeddings = self.proj(embeddings)
+        else:
+            original_embeddings = self.emb(codes)  # B,T,d_model
+        
+        
+        
         class_token = self.class_token.expand(
             B, 1, self.d_model)  # Expand class token for batch
         codes = codes.clone()
@@ -262,9 +265,6 @@ class Encoder(nn.Module):
         if self.first_run:
             print("shape coming out of encoder: ============")
             print(output_.shape)
-            print(output_.isnan().any())
-            print(output_.isinf().any())
-            print(output_.isneginf().any())
 
         if self.first_run:
             print("========= All outputs for the encoder========")
@@ -313,9 +313,10 @@ class Encoder(nn.Module):
     ):
         class_token = embeddings[:, 0, :].unsqueeze(1)
         without_class_token = embeddings[:, 1:, :]
+        
+        B, T, _ = original_embeddings.shape
 
-        all_masked = self.mask_token.expand(
-            original_embeddings.shape[0], original_embeddings.shape[1], -1).clone()
+        all_masked = self.mask_token.expand(B, T, -1).clone()
 
         if self.first_run:
             print("=========== Masked without embeddings shape ========")
@@ -338,35 +339,7 @@ class Encoder(nn.Module):
 
         return all_masked
 
-    def mask_before(self, padding_mask, codes, contrastive_matrix):
-        """creates a mask for the input. the input here is codes of shape B, K, T."""
-
-        B, K, T = codes.shape
-
-        if self.first_run:
-            print(f"masking before with masking proba : {self.mask_p}")
-
-        codes_mask = torch.zeros_like(codes, device=codes.device)
-
-        # multiple ways to mask here:
-        # Randomly (easiest, first to implement)
-        # with chunks
-        # column-wise (same thing)
-        # full codebook (probably a hard regularizer, only restrain to one codebook)
-        retained_idx = [list(range(T)) for b in range(B)]
-        masked_idx = []
-
-        # random masking
-
-        codes_mask = torch.empty(codes.shape).uniform_() > self.mask_p
-        retained_padding_mask = padding_mask
-        contrastive_matrix = contrastive_matrix[0]
-
-        # do some checking here for whole masked columns -> change retained_idx, masked_idx, and retained_padding_mask
-
-        return masked_idx, retained_idx, retained_padding_mask, codes, codes_mask, contrastive_matrix, contrastive_matrix, contrastive_matrix
-
-    def mask_after(self, x, padding_mask, codes, contrastive_matrix):
+    def mask_after(self, x, padding_mask, codes, contrastive_matrix, mask_gap = 15):
         """creates a mask for the input. note that the same amount of tokens must be masked in each batch (because of matrices). so either:
         - mask a precise amount of tokens
         - create a batch mask (easier)
@@ -418,8 +391,9 @@ class Encoder(nn.Module):
             codes_mask[i, :, cur_masked_idx] = 1
 
             cur_masked_idx = masked_idx[i]
+            
 
-            if contrastive_matrix:
+            if contrastive_matrix and T_mat == T +1:
                 cur_masked_idx_mat = [k+1 + i*(T_mat+1)
                                       for k in cur_masked_idx]
                 masked_matrix_blackout[cur_masked_idx_mat, :] = -1
@@ -448,8 +422,6 @@ class Encoder(nn.Module):
         retained_padding_mask = torch.cat([class_padding_mask.unsqueeze(1), retained_padding_mask], dim=1)
 
         return x, masked_idx, retained_idx, retained_padding_mask, codes_mask, contrastive_matrix, masked_matrix_blackout, masked_matrix
-        # All masking modules will return:
-        # the list of masked indices, the list of unsmaked indices, the retained padding mask, the retained features, the masked code matrix (boolean)
 
 
 class VanillaEncoder(Encoder):

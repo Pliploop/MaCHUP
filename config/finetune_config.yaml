@@ -3,7 +3,7 @@ seed_everything: 123
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
-  devices: 1
+  devices: [6]
   num_nodes: 1
   precision: null
   logger: null
@@ -41,28 +41,69 @@ trainer:
   reload_dataloaders_every_n_epochs: 0
   default_root_dir: null
 model:
-  task: GTZAN
-  target_layer: transformer_encoder
-  freeze_encoder: false
+  use_embeddings: true
+  task: MTGTop50Tags
+  freeze_encoder: true
   checkpoint_path: null
   use_global_representation: avg
+  sequence_len: 1024
   optimizer:
     class_path: torch.optim.AdamW
     init_args:
       lr: 0.0001
+
+  encoder:
+    class_path: src.models.Transformer.Encoder.VanillaEncoder
+    init_args:
+      n_codebooks: 4
+      embedding_size:
+        - 256
+        - 256
+        - 128
+        - 128
+      card: 1024
+      embedding_behaviour: concat
+      position_encoder: sinusoidal
+      sequence_len: 2048
+      layers: 10
+      n_heads: 16
+      p: 0.5
+      batched_mask: false
+      mask_special_token: 1025
+  decoder:
+    class_path: src.models.Transformer.Decoder.VanillaDecoder
+    init_args:
+      embedding_size:
+        - 256
+        - 256
+        - 128
+        - 128
+      position_encoder: sinusoidal
+      embedding_behaviour: concat
+      layers: 2
+      n_heads: 16
+  use_embeddings: true
+  encodec:
+    class_path: src.models.Encodec.Encodec
+    init_args:
+      frozen: true
+      model_bandwidth: 3
   
 data:
-  train_data_dir: "/import/c4dm-datasets/gtzan_torchaudio/genres"
-  val_data_dir: null
-  batch_size: 16
+  data_dir: "/import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/mp3"
+  annotations_path: ""
+  batch_size: 64
   num_workers: 16
   target_sample_rate: 24000
-  target_length: 10
+  target_length: 6
   n_augmentations: 1
   validation_split: 0.1
+  test_split: 0.1
   transform: false
   sanity_check_n: null
-  task: GTZAN
+  extension: mp3
+  task: MTGTop50Tags
+
 log: false ## whether or not to log in wandb
 log_model: false
 ckpt_path : 'MuMRVQ'

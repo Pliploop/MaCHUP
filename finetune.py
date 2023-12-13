@@ -1,15 +1,14 @@
 
 from src.models.finetune_model import MaCHUPFinetune
 from pytorch_lightning.cli import LightningCLI
-from src.dataloading.finetuning_datasets import GTZANFinetuneDataset
 from pytorch_lightning.cli import SaveConfigCallback
-from pytorch_lightning import LightningDataModule, LightningModule, Trainer
+from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from src.dataloading.finetuning_datasets import FineTuneDataModule
 import yaml
 import os
-import shutil
+
 
 
 class LoggerSaveConfigCallback(SaveConfigCallback):
@@ -33,8 +32,8 @@ class MyLightningCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
         parser.link_arguments(
             "model.encoder.init_args.n_codebooks", "model.decoder.init_args.n_codebooks")
-        parser.link_arguments("model.encoder.init_args.emebdding_size",
-                              "model.decoder.init_args.eùbedding_size")
+        parser.link_arguments("model.encoder.init_args.embedding_size",
+                              "model.decoder.init_args.embedding_size")
         parser.link_arguments("model.encoder.init_args.card",
                               "model.decoder.init_args.card")
         parser.link_arguments("model.encoder.init_args.embedding_behaviour",
@@ -50,13 +49,14 @@ class MyLightningCLI(LightningCLI):
         parser.add_argument("--log", default=False)
         parser.add_argument("--log_model", default=False)
         parser.add_argument("--ckpt_path", default="MuMRVQ_checkpoints")
-
+        parser.add_argument("--resume_from_checkpoint", default=None)
+        parser.add_argument("--resume_id", default=None)
 
 if __name__ == "__main__":
     
 
     cli = MyLightningCLI(model_class=MaCHUPFinetune, datamodule_class=FineTuneDataModule, seed_everything_default=123,
-                         run=False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite": True},)
+                         run=False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite": True})
 
     cli.instantiate_classes()
 

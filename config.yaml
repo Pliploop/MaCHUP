@@ -1,15 +1,16 @@
 # pytorch_lightning==2.1.0
-seed_everything: 112
+seed_everything: 123
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
-  devices: '1'
+  devices:
+  - 6
   num_nodes: 1
   precision: null
   logger: null
   callbacks: null
   fast_dev_run: false
-  max_epochs: 100
+  max_epochs: 1000
   min_epochs: null
   max_steps: -1
   min_steps: null
@@ -47,9 +48,9 @@ model:
       n_codebooks: 4
       embedding_size:
       - 256
+      - 256
       - 128
-      - 64
-      - 64
+      - 128
       card: 1024
       embedding_behaviour: concat
       position_encoder: sinusoidal
@@ -61,11 +62,6 @@ model:
   decoder:
     class_path: src.models.VanillaDecoder
     init_args:
-      embedding_size:
-      - 256
-      - 128
-      - 64
-      - 64
       layers: 2
       n_heads: 16
       position_encoder: sinusoidal
@@ -75,49 +71,43 @@ model:
       frozen: true
       model_bandwidth: 3
   optimizer:
-    class_path: torch.optim.Adam
+    class_path: torch.optim.AdamW
     init_args:
-      lr: 0.0002
+      lr: 0.0001
       betas:
       - 0.9
       - 0.999
       eps: 1.0e-08
-      weight_decay: 0.0001
+      weight_decay: 0.01
       amsgrad: false
-      foreach: null
       maximize: false
+      foreach: null
       capturable: false
       differentiable: false
       fused: null
-  n_codebooks: 4
   sequence_len: 1024
-  mask_special_token: 1025
-  pad_special_token: 1026
-  mask_before: false
   debug: false
-  masked_loss_ratio: 0.9
-  masked_objective: true
-  contrastive_objective: false
-  window_size: 150
   adapt_sequence_len: true
-  contrastive_to_masked_ratio: 0
-  global_vs_local_contrastive_loss_ratio: 0
-  global_class_vs_average_contrastive_loss_ratio: 1
-  contrastive_temperature: 0.3
-  reduce_lr_monitor: masked loss
-  only_global_contrastive: true
-  use_encodec_embedddings: false
+  checkpoint_path: MuMRVQ/autumn-wood-299/checkpoint-step=9930.ckpt
+  task: MTGTop50Tags
+  freeze_encoder: true
+  use_global_representation: avg
+  use_embeddings: true
 data:
-  train_data_dir: /import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/wav
-  val_data_dir: null
-  batch_size: 24
-  num_workers: 64
+  data_dir: /import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/mp3
+  annotations_path: ''
+  batch_size: 64
+  num_workers: 16
   target_sample_rate: 24000
-  target_length: 10
+  target_length: 6
   validation_split: 0.1
-  n_augmentations: 2
+  test_split: 0.1
+  n_augmentations: 1
   transform: false
   sanity_check_n: null
+  extension: mp3
 log: 'true'
 log_model: false
 ckpt_path: MuMRVQ
+resume_from_checkpoint: null
+resume_id: null

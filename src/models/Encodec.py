@@ -4,6 +4,8 @@ import torch
 from torch import nn
 
 from pytorch_lightning import LightningModule
+from transformers import AutoFeatureExtractor, AutoModel, AutoProcessor
+
 
 
 class Encodec(nn.Module):
@@ -11,37 +13,55 @@ class Encodec(nn.Module):
     def __init__(self,  sample_rate=24000, frozen=True, model_bandwidth=3, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.frozen = frozen
+        self.sample_rate = sample_rate
         
         self.model_bandwidth = model_bandwidth
         if sample_rate == 24000:
             self.model = EncodecModel.encodec_model_24khz()
-        else:
+            self.hop_length = self.model.encoder.hop_length
+            self.model.set_target_bandwidth(self.model_bandwidth)
+        elif sample_rate == 48000:
             self.model = EncodecModel.encodec_model_48khz()
-        # The number of codebooks used will be determined bythe bandwidth selected.
-        # E.g. for a bandwidth of 6kbps, `n_q = 8` codebooks are used.
-        # Supported bandwidths are 1.5kbps (n_q = 2), 3 kbps (n_q = 4), 6 kbps (n_q = 8) and 12 kbps (n_q =16) and 24kbps (n_q=32).
-        # For the 48 kHz model, only 3, 6, 12, and 24 kbps are supported. The number
-        # of codebooks for each is half that of the 24 kHz model as the frame rate is twice as much.
-        self.model.set_target_bandwidth(self.model_bandwidth)
+            self.hop_length = self.model.encoder.hop_length
+            self.model.set_target_bandwidth(self.model_bandwidth)
+        elif sample_rate == 32000:
+            self.model = AutoModel.from_pretrained("facebook/encodec_32khz")
+            self.hop_length = sample_rate // 50 # model outputs 50 frames per second, which is 640 hop length at 32khz
         
         if self.frozen:
             for param in self.model.parameters(): param.requires_grad = False
+            self.model.eval()
         
-        self.hop_length = self.model.encoder.hop_length
 
     def forward(self, wav):
         # wav is a batched waveform.unsqueeze if not:
         if wav.dim() == 2:
             wav = wav.unsqueeze(0)
 
-        if self.frozen:
-            with torch.no_grad():
-
-                encoded_frames = self.model.encode(wav)
+        encoded_frames = self.model.encode(wav)
+        if self.sample_rate != 32000:
+            codes = torch.cat([encoded[0]
+                            for encoded in encoded_frames], dim=-1)  # [B, n_q, T]
         else:
-            encoded_frames = self.model.encode(wav)
-
-        codes = torch.cat([encoded[0]
-                          for encoded in encoded_frames], dim=-1)  # [B, n_q, T]
-
+            codes = encoded_frames.audio_codes.squeeze(0)
+        
         return codes.int()
+    
+    def get_embeddings(self,wav):
+        if wav.dim() == 2:
+            wav = wav.unsqueeze(0)
+        
+        embeddings = self.model.encoder(wav)
+        return embeddings
+
+    def get_encodec_output(self,wav):
+        
+        codes = self.forward(wav)
+        embeddings = self.get_embeddings(wav)
+        
+        return codes,embeddings
+    
+    def dummy_test(self):
+        
+        dummy_data = torch.randn(2,1,self.sample_rate*2)
+        return self.get_encodec_output(dummy_data)

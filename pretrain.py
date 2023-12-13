@@ -19,7 +19,7 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
             config = self.parser.dump(self.config, skip_none=False)
             with open(self.config_filename, "r") as config_file:
                 config = yaml.load(config_file, Loader=yaml.FullLoader)
-                trainer.logger.experiment.config.update(config)
+                trainer.logger.experiment.config.update(config, allow_val_change=True)
             with open(os.path.join(os.path.join(self.config['ckpt_path'], experiment_name), "config.yaml"), 'w') as outfile:
                 yaml.dump(config, outfile, default_flow_style=False)
                 
@@ -29,12 +29,9 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
                 dirpath=os.path.join(self.config['ckpt_path'], experiment_name),
                 filename='checkpoint-{step}',
                 save_top_k=-1,  # This means all checkpoints are saved, not just the top k
-                every_n_epochs=1  # Replace with your desired value
+                every_n_epochs=2  # Replace with your desired value
             )
-
-            callbacks = [ModelCheckpoint(os.path.join(self.config['ckpt_path'], experiment_name), monitor="contrastive loss", save_top_k=1, filename="checkpoint_{step}_contrastive"),
-                         ModelCheckpoint(os.path.join(self.config['ckpt_path'], experiment_name), monitor="train_crossentropy_simple", save_top_k=1, filename="checkpoint_{step}_train_crossentropy_simple"),
-                        recent_callback                  
+            callbacks = [recent_callback                  
                         ]
             trainer.callbacks = trainer.callbacks[:-1]+callbacks
 
@@ -53,11 +50,12 @@ class MyLightningCLI(LightningCLI):
                               "model.encoder.init_args.sequence_len")
         parser.link_arguments("model.sequence_len",
                               "model.decoder.init_args.sequence_len")
-        parser.link_arguments("data.target_sample_rate",
-                              "model.encodec.init_args.sample_rate")
+        parser.link_arguments("model.encodec.init_args.sample_rate","data.target_sample_rate")
         parser.add_argument("--log", default=False)
         parser.add_argument("--log_model", default=False)
         parser.add_argument("--ckpt_path", default="MuMRVQ_checkpoints")
+        parser.add_argument("--resume_id", default=None)
+        parser.add_argument("--resume_from_checkpoint", default=None)
 
 
 if __name__ == "__main__":
@@ -68,7 +66,7 @@ if __name__ == "__main__":
     cli.instantiate_classes()
 
     if cli.config.log:
-        logger = WandbLogger(project="MuMRVQ")
+        logger = WandbLogger(project="MuMRVQ", id=cli.config.resume_id)
 
         experiment_name = logger.experiment.name
         ckpt_path = cli.config.ckpt_path
@@ -83,4 +81,4 @@ if __name__ == "__main__":
     except:
         pass
 
-    cli.trainer.fit(model=cli.model, datamodule=cli.datamodule)
+    cli.trainer.fit(model=cli.model, datamodule=cli.datamodule, ckpt_path=cli.config.resume_from_checkpoint)

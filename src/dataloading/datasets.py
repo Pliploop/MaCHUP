@@ -57,22 +57,20 @@ class CustomAudioDataset(Dataset):
         file_path = os.path.join(self.data_dir, file_name)
 
         # waveform, sample_rate = torchaudio.load(file_path)
-        try:
-            info = sf.info(file_path)
-            sample_rate = info.samplerate
-            n_frames = info.frames
-            
-            
-            new_target_n_samples = int(
-                self.target_n_samples/self.target_sample_rate * sample_rate)
+        info = sf.info(file_path)
+        sample_rate = info.samplerate
+        n_frames = info.frames
+        
+        
+        new_target_n_samples = int(
+            self.target_n_samples/self.target_sample_rate * sample_rate)
 
-            if n_frames <= new_target_n_samples:
-                return (self[idx+1])
-            start_idx = np.random.randint(low=0, high=n_frames - new_target_n_samples)
-            waveform, sample_rate = sf.read(
-                file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
-        except:
+        if n_frames <= new_target_n_samples:
             return (self[idx+1])
+        start_idx = np.random.randint(low=0, high=n_frames - new_target_n_samples)
+        waveform, sample_rate = sf.read(
+            file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
+
 
         waveform = torch.Tensor(waveform.transpose())
         encodec_audio = convert_audio(
@@ -119,16 +117,16 @@ class CustomAudioDataModule(pl.LightningDataModule):
                         min_gain_in_db=-15.0,
                         max_gain_in_db=5.0,
                         p=0.4,
-                        sample_rate=24000
+                        sample_rate=self.target_sample_rate
                     ),
-                    PolarityInversion(p=0.6, sample_rate=24000),
-                    AddColoredNoise(p=0.3, sample_rate=24000),
-                    PitchShift(p=0.3, sample_rate = 24000),
+                    PolarityInversion(p=0.6, sample_rate=self.target_sample_rate),
+                    AddColoredNoise(p=0.3, sample_rate=self.target_sample_rate),
+                    PitchShift(p=0.3, sample_rate = self.target_sample_rate),
                     OneOf([
-                        BandPassFilter(p=0.3, sample_rate = 24000),
-                        BandStopFilter(p=0.3, sample_rate = 24000),
-                        HighPassFilter(p=0.3, sample_rate = 24000),
-                        LowPassFilter(p=0.3, sample_rate = 24000),
+                        BandPassFilter(p=0.3, sample_rate = self.target_sample_rate),
+                        BandStopFilter(p=0.3, sample_rate = self.target_sample_rate),
+                        HighPassFilter(p=0.3, sample_rate = self.target_sample_rate),
+                        LowPassFilter(p=0.3, sample_rate = self.target_sample_rate),
                     ])
                 ]
             )

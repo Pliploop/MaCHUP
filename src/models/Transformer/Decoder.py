@@ -8,7 +8,11 @@ from pytorch_lightning import LightningModule
 
 
 class Decoder(nn.Module):
-    
+    """"Default transformer decoder. Default behaviour is according to encodecMAE (or similar):
+
+
+    """
+
     def __init__(
             self,
             n_codebooks=4,
@@ -33,7 +37,8 @@ class Decoder(nn.Module):
         else:
             self.d_model = self.embedding_size[0]
 
-        self.linears = nn.Linear(self.d_model, (self.card + 3)*self.n_codebooks) # +3 is because of special tokens pad, mask, and pattern
+        self.linears = nn.ModuleList([nn.Linear(
+            self.d_model, self.card + 3) for codebook in range(self.n_codebooks)])  # +3 is because of special tokens pad, mask, and pattern
 
         self.n_heads = n_heads
         self.layers = layers
@@ -47,9 +52,12 @@ class Decoder(nn.Module):
         else:
             self.position_encoder = LearnedPositionalEncoding(
                 self.d_model, max_len=self.sequence_len)
+            
 
     def forward(self, embeddings, padding_mask=None):
-        # indices is of shape B,n_q,T
+        
+        
+        
         B, T, d_model = embeddings.shape
 
         embeddings = self.position_encoder(embeddings)
@@ -58,16 +66,12 @@ class Decoder(nn.Module):
             embeddings, src_key_padding_mask=padding_mask)
         # shape B,T,d_model
 
-        # logits = torch.stack([self.linears[k](output_) for k in range(
-        #     self.n_codebooks)], dim=1).permute(0, 3, 1, 2)
-        
-        # 
-        
-        logits = self.linears(output_).view(B,self.n_codebooks,T,self.card+3).permute(0, 3, 1, 2)
+        logits = torch.stack([self.linears[k](output_) for k in range(
+            self.n_codebooks)], dim=1).permute(0, 3, 1, 2)
 
         return logits
     
-    def finetune_forward(self, embeddings, padding_mask=None):
+    def finetune_forward(self, embeddings):
         return embeddings
 
     def adapt_sequence_len(self,new_sequence_len):
