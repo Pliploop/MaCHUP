@@ -27,12 +27,13 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
             
             recent_callback = ModelCheckpoint(
                 dirpath=os.path.join(self.config['ckpt_path'], experiment_name),
-                filename='checkpoint-{step}',
-                save_top_k=-1,  # This means all checkpoints are saved, not just the top k
-                every_n_epochs=2  # Replace with your desired value
+                filename='checkpoint-{step}',  # This means all checkpoints are saved, not just the top k
+                every_n_epochs=1  # Replace with your desired value
             )
             callbacks = [recent_callback                  
                         ]
+            
+            
             trainer.callbacks = trainer.callbacks[:-1]+callbacks
 
 
@@ -62,6 +63,8 @@ if __name__ == "__main__":
 
     cli = MyLightningCLI(model_class=MaCHUP, datamodule_class=CustomAudioDataModule, seed_everything_default=123,
                          run=False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite": True},)
+    
+    print('cli.config', cli.config)
 
     cli.instantiate_classes()
 

@@ -3,7 +3,7 @@ seed_everything: 123
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
-  devices: [6]
+  devices: [5]
   num_nodes: 1
   precision: null
   logger: null
@@ -43,6 +43,8 @@ trainer:
 model:
   use_embeddings: true
   task: MTGTop50Tags
+  n_classes: 50
+  mlp_head: false
   freeze_encoder: true
   checkpoint_path: null
   use_global_representation: avg
@@ -61,7 +63,7 @@ model:
         - 256
         - 128
         - 128
-      card: 1024
+      card: 2048
       embedding_behaviour: concat
       position_encoder: sinusoidal
       sequence_len: 2048
@@ -69,7 +71,6 @@ model:
       n_heads: 16
       p: 0.5
       batched_mask: false
-      mask_special_token: 1025
   decoder:
     class_path: src.models.Transformer.Decoder.VanillaDecoder
     init_args:
@@ -88,13 +89,14 @@ model:
     init_args:
       frozen: true
       model_bandwidth: 3
+      sample_rate: 32000
   
 data:
   data_dir: "/import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/mp3"
   annotations_path: ""
   batch_size: 64
   num_workers: 16
-  target_sample_rate: 24000
+  target_sample_rate: 32000
   target_length: 6
   n_augmentations: 1
   validation_split: 0.1
@@ -106,4 +108,4 @@ data:
 
 log: false ## whether or not to log in wandb
 log_model: false
-ckpt_path : 'MuMRVQ'
+ckpt_path : 'MuMRVQ-finetuning'

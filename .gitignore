@@ -2,6 +2,7 @@
 wandb
 *.ipynb
 MuMRVQ
+MuMRVQ-finetuning
 *.pyc
 
 # Byte-compiled / optimized / DLL files
@@ -62,6 +63,9 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# MuMRVQ-finetuning
+scripts/
+
 # Translations
 *.mo
 *.pot
@@ -85,6 +89,9 @@ docs/_build/
 # PyBuilder
 .pybuilder/
 target/
+
+*/__pycache__
+*.ipynb
 
 # Jupyter Notebook
 .ipynb_checkpoints

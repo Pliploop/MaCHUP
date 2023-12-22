@@ -20,13 +20,25 @@ class Encodec(nn.Module):
             self.model = EncodecModel.encodec_model_24khz()
             self.hop_length = self.model.encoder.hop_length
             self.model.set_target_bandwidth(self.model_bandwidth)
+            self.card = 1024
+            self.fps = 75
         elif sample_rate == 48000:
             self.model = EncodecModel.encodec_model_48khz()
             self.hop_length = self.model.encoder.hop_length
             self.model.set_target_bandwidth(self.model_bandwidth)
+            self.fps = 75
         elif sample_rate == 32000:
             self.model = AutoModel.from_pretrained("facebook/encodec_32khz")
             self.hop_length = sample_rate // 50 # model outputs 50 frames per second, which is 640 hop length at 32khz
+            self.card = 2048
+            self.fps = 50
+            
+            
+        print(f"Model sample rate: {self.sample_rate}")
+        print(f"Model hop length: {self.hop_length}")
+        # dummy test
+        print( "Dummy test: ", self.dummy_test()[0].shape, self.dummy_test()[1].shape)
+        
         
         if self.frozen:
             for param in self.model.parameters(): param.requires_grad = False
@@ -52,7 +64,7 @@ class Encodec(nn.Module):
             wav = wav.unsqueeze(0)
         
         embeddings = self.model.encoder(wav)
-        return embeddings
+        return embeddings.permute(0,2,1)
 
     def get_encodec_output(self,wav):
         

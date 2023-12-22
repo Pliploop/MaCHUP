@@ -9,30 +9,42 @@ import torch.optim as optim
 from pytorch_lightning.cli import OptimizerCallable
 from src.evaluation.metrics import *
 from torchmetrics.classification import MultilabelAUROC, MultilabelAveragePrecision
+from torch.nn.functional import sigmoid
 
 
 
-class Head(nn.Module):
+class MLPHead(nn.Module):
     
-    def __init__(self, d_model, n_classes, output_activation=None):
+    def __init__(self, d_model, n_classes,dropout = 0):
         super().__init__()
         self.d_model = d_model
         self.n_classes = n_classes
         
         self.linear = nn.Linear(d_model, n_classes)
         self.linear_2 = nn.Linear(d_model, d_model)
-        
-        if output_activation is None:
-            self.output_activation = nn.Identity()
-        if output_activation == "sigmoid":
-            self.output_activation = nn.Sigmoid()
+        self.dropout_1 = nn.Dropout(dropout)
+        self.dropout_2 = nn.Dropout(dropout)
         
     def forward(self, x):
         x = self.linear_2(x)
         x = torch.nn.functional.relu(x)
         x = self.linear(x)
-        x = self.output_activation(x)
         return x
+    
+
+class LinearHead(nn.Module):
+        
+        def __init__(self, d_model, n_classes, dropout = 0):
+            super().__init__()
+            self.d_model = d_model
+            self.n_classes = n_classes
+            
+            self.linear = nn.Linear(d_model, n_classes)
+            
+            
+        def forward(self, x):
+            x = self.linear(x)
+            return x
 
 class MaCHUPFinetune(LightningModule):
     def __init__(
@@ -46,8 +58,10 @@ class MaCHUPFinetune(LightningModule):
         adapt_sequence_len=True,
         checkpoint_path: str = None,
         task = "GTZAN",
+        n_classes=10,
+        mlp_head = False,
         freeze_encoder = False,
-        use_global_representation = "class",
+        use_global_representation = "avg",
         use_embeddings = True,
         *args,
         **kwargs,
@@ -84,17 +98,16 @@ class MaCHUPFinetune(LightningModule):
             self.loss_fn = nn.CrossEntropyLoss()
         if self.task == "MTGTop50Tags":
             self.loss_fn = nn.BCEWithLogitsLoss()
+        
+        self.n_classes = n_classes
+        
+        if mlp_head:
+            self.head = MLPHead(d_model = self.machup.d_model, n_classes = self.n_classes)
+        else:
+            self.head = LinearHead(d_model = self.machup.d_model, n_classes = self.n_classes)
+        
             
-        if self.task == "GTZAN":
-            self.head = Head(self.machup.d_model, 10)
-        if self.task == "MTGTop50Tags":
-            self.head = Head(self.machup.d_model, 50)
-            
-            
-        if self.task == "GTZAN":
-            self.n_classes = 10
-        if self.task == "MTGTop50Tags":
-            self.n_classes = 50
+        
             
         self.auroc = MultilabelAUROC(num_labels=self.n_classes)
         self.ap = MultilabelAveragePrecision(num_labels=self.n_classes)
@@ -208,8 +221,8 @@ class MaCHUPFinetune(LightningModule):
         
         
         # get all the metrics here
-        auroc = self.auroc(preds = head_out, target = y.int())
-        ap = self.ap(preds = head_out, target =  y.int())
+        auroc = self.auroc(preds = sigmoid(head_out), target = y.int())
+        ap = self.ap(preds = sigmoid(head_out), target =  y.int())
         
         
         # log all the metrics here

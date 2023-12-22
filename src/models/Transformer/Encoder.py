@@ -77,8 +77,8 @@ class Encoder(nn.Module):
 
         self.card = card
         self.sequence_len = sequence_len
-        self.mask_special_token = self.card + 1
-        self.pad_special_token = self.card + 2
+        self.mask_special_token = self.card + 2
+        self.pad_special_token = self.card + 3
         self.position_encoder = position_encoder
 
         if self.embedding_behaviour == "concat":
@@ -122,7 +122,7 @@ class Encoder(nn.Module):
 
         self.norm = LayerNorm(self.d_model)
         self.transformer_layer = TransformerEncoderLayer(
-            self.d_model, self.n_heads, activation="gelu", batch_first=True, dropout=0
+            self.d_model, self.n_heads, activation="gelu", batch_first=True, dropout=0.1
         )
         self.transformer = TransformerEncoder(
             self.transformer_layer, self.layers, norm=self.norm
@@ -437,7 +437,6 @@ class VanillaEncoder(Encoder):
         n_heads=8,
         p=0.5,
         batched_mask=False,
-        mask_special_token=1025,
         *args,
         **kwargs,
     ) -> None:
@@ -452,7 +451,6 @@ class VanillaEncoder(Encoder):
             n_heads,
             p,
             batched_mask,
-            mask_special_token,
             *args,
             **kwargs,
         )

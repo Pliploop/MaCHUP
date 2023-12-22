@@ -21,11 +21,14 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
                 config = yaml.load(config_file, Loader=yaml.FullLoader)
                 trainer.logger.experiment.config.update(config)
                 
-            with open(os.path.join(os.path.join(self.config['ckpt_path'], experiment_name+f'_finetune_{config["model"]["task"]}'), "config.yaml"), 'w') as outfile:
+            
+            previous_experiment_name = config['model']['checkpoint_path'].split('/')[-2]
+                
+            with open(os.path.join(os.path.join(self.config['ckpt_path'], experiment_name+f'_finetune_{previous_experiment_name}_{config["model"]["task"]}'), "config.yaml"), 'w') as outfile:
                 yaml.dump(config, outfile, default_flow_style=False)
 
             
-            trainer.logger.experiment.name = experiment_name+f'_finetune_{config["model"]["task"]}'
+            trainer.logger.experiment.name = experiment_name+f'_finetune_{previous_experiment_name}_{config["model"]["task"]}'
 
 
 class MyLightningCLI(LightningCLI):
@@ -59,10 +62,14 @@ if __name__ == "__main__":
                          run=False, save_config_callback=LoggerSaveConfigCallback, save_config_kwargs={"overwrite": True})
 
     cli.instantiate_classes()
+    
+    # get the name of the model loaded from checkpoint
+    if cli.config.model.checkpoint_path is not None:
+        previous_experiment_name = cli.config.model.checkpoint_path.split('/')[-2]
 
     if cli.config.log:
-        logger = WandbLogger(project="MuMRVQ")
-        experiment_name = logger.experiment.name+f"_finetune_{cli.config['model']['task']}"
+        logger = WandbLogger(project="MuMRVQ-finetuning")
+        experiment_name = logger.experiment.name+f"_finetune_{previous_experiment_name}_{cli.config['model']['task']}"
         ckpt_path = cli.config.ckpt_path
     else:
         logger = None
@@ -75,6 +82,5 @@ if __name__ == "__main__":
     except:
         pass
     
-    print(cli.config)
 
     cli.trainer.fit(model=cli.model, datamodule=cli.datamodule)

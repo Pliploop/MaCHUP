@@ -3,13 +3,13 @@ seed_everything: 123
 trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
-  devices: [5]
+  devices: [7]
   num_nodes: 1
   precision: null
   logger: null
   callbacks: null
   fast_dev_run: false
-  max_epochs: 100
+  max_epochs: 1000
   min_epochs: null
   max_steps: -1
   min_steps: null
@@ -26,7 +26,7 @@ trainer:
   enable_checkpointing: false
   enable_progress_bar: true
   enable_model_summary: true
-  accumulate_grad_batches: 4
+  accumulate_grad_batches: 1
   gradient_clip_val: 1
   gradient_clip_algorithm: null
   deterministic: warn
@@ -41,7 +41,20 @@ trainer:
   reload_dataloaders_every_n_epochs: 0
   default_root_dir: null
 model:
-  checkpoint_path : null
+  use_embeddings: true
+  task: GTZAN
+  n_classes: 10
+  mlp_head: false
+  freeze_encoder: true
+  checkpoint_path: null
+  use_global_representation: avg
+  sequence_len: 1024
+  optimizer:
+    class_path: torch.optim.AdamW
+    init_args:
+      lr: 0.0001
+
+  
   encoder:
     class_path: src.models.Transformer.Encoder.VanillaEncoder
     init_args:
@@ -51,7 +64,7 @@ model:
         - 256
         - 128
         - 128
-      card: 2048
+      card: 2048 
       embedding_behaviour: concat
       position_encoder: sinusoidal
       sequence_len: 2048
@@ -71,48 +84,29 @@ model:
       embedding_behaviour: concat
       layers: 2
       n_heads: 16
-  optimizer:
-    class_path: torch.optim.Adam
-    init_args:
-      lr: 0.0002
-      betas:
-        - 0.9
-        - 0.999
-      eps: 1e-8
-      weight_decay: 0.0001
-  n_codebooks: 4
-  sequence_len: 1024 # specify the sequence length of the input. Can toggle sequence length adaptation in the model to prevent padding.
-  mask_before: false
-  debug: false
   use_embeddings: true
-  masked_loss_ratio: 0.8 # when 1, only masked tokens are counted for the MLM loss
-  contrastive_to_masked_ratio: 0.1 #when 1, only the contrastive loss is counted. When 0, only the masked loss is counted
-  global_vs_local_contrastive_loss_ratio: 0 # when 1, only the global contrastive loss is counted. When 0, only the local contrastive loss is counted
-  global_class_vs_average_contrastive_loss_ratio: 0 # when 1, the class tokens are used for global contrastive loss. when 0, the average of the sequence is used.
-  masked_objective: true # whether or not to use the masked objective
-  contrastive_objective: true # whether or not to use the contrastive objective
-  window_size: 2 # window size for local contrastive loss, in seconds
-  contrastive_temperature: 0.1 # temperature for contrastive loss
-  only_global_contrastive: true # different than global_vs_local_contrastive_loss_ratio. When true, designed to free up memory by using only the class contrastive matrix for unmasked sequences, making this an SBERT problem.
   encodec:
     class_path: src.models.Encodec.Encodec
     init_args:
       frozen: true
       model_bandwidth: 3
       sample_rate: 32000
+  
 data:
-  train_data_dir: "/import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/wav"
-  val_data_dir: null
-  batch_size: 24
-  num_workers: 32
+  data_dir: "/import/c4dm-datasets/gtzan_torchaudio/genres"
+  annotations_path: ""
+  batch_size: 64
+  num_workers: 16
   target_sample_rate: 32000
   target_length: 6
-  n_augmentations: 2
+  n_augmentations: 1
   validation_split: 0.1
+  test_split: 0.1
   transform: false
   sanity_check_n: null
+  extension: wav
+  task: GTZAN
+
 log: false ## whether or not to log in wandb
 log_model: false
-ckpt_path: "MuMRVQ"
-resume_from_checkpoint: null
-resume_id: null
+ckpt_path : 'MuMRVQ-finetuning'

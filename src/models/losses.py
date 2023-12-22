@@ -26,6 +26,7 @@ class MySupConLoss(nn.Module):
         
         ## add zeros to negative and positive masks to prevent self-contrasting
         
+        
         self_contrast = (~(torch.eye(positive_mask.shape[0], device = features.device).bool())).int()
         
         
@@ -33,26 +34,33 @@ class MySupConLoss(nn.Module):
         negative_mask = negative_mask * self_contrast
         
     
-        original_cosim = self.get_similarities(features=features)       
+        original_cosim = self.get_similarities(features=features)    
+        
+        original_cosim = torch.exp(original_cosim)   ## remove this when reverting
         
         
-        positives = original_cosim * positive_mask
-        negatives = torch.exp(original_cosim) * negative_mask
+        # positives = original_cosim * positive_mask
+        # negatives = torch.exp(original_cosim) * negative_mask
         
         
-        negatives_summed = negatives.sum(1, keepdim = True)
+        # negatives_summed = negatives.sum(1, keepdim = True)
         
-        log_negatives_summed = torch.log(negatives_summed)
+        # log_negatives_summed = torch.log(negatives_summed)
         
         
-        log_prob = positives - log_negatives_summed
+        # log_prob = positives - log_negatives_summed
         
-        positive_cardinal = positive_mask.sum(1)
+        # positive_cardinal = positive_mask.sum(1)
         
-        log_prob = log_prob / positive_cardinal
+        # log_prob = log_prob / positive_cardinal
     
+    
+        pos = torch.sum( original_cosim * positive_mask, dim = 1)
+        neg = torch.sum( original_cosim * negative_mask, dim = 1)
+        loss = -(torch.mean(torch.log(pos / (pos + neg))))    
         
+        # loss = - log_prob.sum()/MN ## not directly mean() because size of matrix is MN squared
         
-        loss = - log_prob.mean()
+        # loss = - log_prob.mean()
         return loss
     
