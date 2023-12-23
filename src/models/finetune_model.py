@@ -10,6 +10,7 @@ from pytorch_lightning.cli import OptimizerCallable
 from src.evaluation.metrics import *
 from torchmetrics.classification import MultilabelAUROC, MultilabelAveragePrecision
 from torch.nn.functional import sigmoid
+from torchmetrics.functional.classification import accuracy, precision, recall
 
 
 
@@ -151,7 +152,12 @@ class MaCHUPFinetune(LightningModule):
             return self.GTZAN_validation_step(batch, batch_idx)
         if self.task == "MTGTop50Tags":
             return self.mtg_top50_validation_step(batch, batch_idx)
-    
+        
+    def test_step(self, batch, batch_idx):
+        if self.task == "GTZAN":
+            return self.GTZAN_test_step(batch, batch_idx)
+        if self.task == "MTGTop50Tags":
+            return self.mtg_top50_test_step(batch, batch_idx)
         
     
         
@@ -166,9 +172,9 @@ class MaCHUPFinetune(LightningModule):
         
         
         # get all the metrics here
-        acc = accuracy_score_multiclass(y, head_out)
-        prec = precision_score_multiclass(y, head_out)
-        rec = recall_score_multiclass(y, head_out)
+        acc = accuracy(y, head_out, num_classes=self.n_classes,task="multiclass")
+        prec = precision(y, head_out, num_classes=self.n_classes,task="multiclass")
+        rec = recall(y, head_out, num_classes=self.n_classes,task="multiclass")
         # auroc = roc_auc_score_multiclass(y, head_out)
         
         # log all the metrics here
@@ -193,21 +199,55 @@ class MaCHUPFinetune(LightningModule):
         y = y.cpu()
         
         # get all the metrics here
-        acc = accuracy_score_multiclass(y, head_out)
-        prec = precision_score_multiclass(y, head_out)
-        rec = recall_score_multiclass(y, head_out)
+        acc = accuracy(y, head_out, num_classes=self.n_classes,task="multiclass")
+        prec = precision(y, head_out, num_classes=self.n_classes,task="multiclass")
+        rec = recall(y, head_out, num_classes=self.n_classes,task="multiclass")
         # auroc = roc_auc_score_multiclass(y, head_out)
         
         
         # log all the metrics here
-        self.log('val_crossentropy', loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log('val_accuracy', acc, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log('val_precision', prec, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
-        self.log('val_recall', rec, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log('val_crossentropy', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log('val_accuracy', acc, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log('val_precision', prec, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log('val_recall', rec, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
         # self.log('val_auroc', auroc, on_step=True, on_epoch=True, prog_bar=False)
         
         
         return loss
+    
+    def GTZAN_test_step(self,batch,batch_idx):
+        x = batch['wav'] #shape [1,chunks,T]
+        y = batch['label'] #shape[1,n_classes]
+        # flatten the batch
+        x = x.squeeze(0)
+        y = y.squeeze(0)
+        
+        encoded, head_out = self(x)
+        #head_out is shape [chunks,n_classes]
+        head_out = head_out.mean(dim=0) #shape [n_classes]
+        
+        
+        head_out = head_out.unsqueeze(0)
+        y = y.unsqueeze(0)
+        
+        loss = self.loss_fn(head_out, y)
+        
+        head_out = head_out.cpu()
+        y = y.cpu()
+        
+        
+        # get all the metrics here
+        acc = accuracy(y, head_out, num_classes=self.n_classes,task="multiclass")
+        prec = precision(y, head_out, num_classes=self.n_classes,task="multiclass")
+        rec = recall(y, head_out, num_classes=self.n_classes,task="multiclass")
+        # auroc = roc_auc_score_multiclass(y, head_out)
+        
+        
+        # log all the metrics here
+        self.log('val_crossentropy', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log('val_accuracy', acc, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log('val_precision', prec, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log('val_recall', rec, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
     
 
     def mtg_top50_train_step(self,batch, batch_idx):
@@ -237,9 +277,42 @@ class MaCHUPFinetune(LightningModule):
         
         x = batch['wav']
         y = batch['label']
+        # flatten the batch
+        x = x.squeeze(0)
+        y = y.squeeze(0)
         
         
         encoded, head_out = self(x)
+        
+        loss = self.loss_fn(head_out, y)
+        
+        
+        auroc = self.auroc(preds = head_out, target = y.int())
+        ap = self.ap(preds = head_out, target = y.int())
+        
+        
+        # log all the metrics here
+        self.log('val_crossentropy', loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log('val_auroc', auroc, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
+        self.log('val_ap', ap, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
+        
+        return loss
+    
+    
+    def mtg_top50_test_step(self,batch,batch_idx):
+        
+        x = batch['wav']
+        y = batch['label']
+        x = x.squeeze(0)
+        y = y.squeeze(0)
+        
+        encoded, head_out = self(x)
+        
+        head_out = head_out.mean(dim=0)
+        
+        head_out = head_out.unsqueeze(0)
+        y = y.unsqueeze(0)
+        
         loss = self.loss_fn(head_out, y)
         
         
