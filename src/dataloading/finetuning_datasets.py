@@ -41,7 +41,6 @@ class FineTuneDataModule(pl.LightningDataModule):
                                             target_length=self.target_length, n_augmentations=self.n_augmentations, transform=self.transform, sanity_check_n=self.sanity_check_n, validation_split=validation_split, test_split=test_split, extension=self.extension)
 
     def setup(self, stage=None):
-        if stage == 'fit' or stage is None:
 
             self.train_dataset = self.dataset_router.get_train_dataset()
             self.val_dataset = self.dataset_router.get_val_dataset()

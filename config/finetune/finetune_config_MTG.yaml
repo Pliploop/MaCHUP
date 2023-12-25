@@ -44,15 +44,16 @@ model:
   use_embeddings: true
   task: MTGTop50Tags
   n_classes: 50
-  mlp_head: false
+  mlp_head: true
   freeze_encoder: true
-  checkpoint_path: null
+  checkpoint: null
+  head_checkpoint: null
   use_global_representation: avg
   sequence_len: 1024
   optimizer:
-    class_path: torch.optim.AdamW
+    class_path: torch.optim.Adam
     init_args:
-      lr: 0.0001
+      lr: 0.0003
 
   encoder:
     class_path: src.models.Transformer.Encoder.VanillaEncoder
@@ -109,3 +110,4 @@ data:
 log: false ## whether or not to log in wandb
 log_model: false
 ckpt_path : 'MuMRVQ-finetuning'
+test: false

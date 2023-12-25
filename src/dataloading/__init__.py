@@ -26,8 +26,11 @@ class DatasetRouter:
             class2id = None
         elif self.task == 'MTGTop50Tags':
             annotations, class2id = self.get_mtg_top50_annotations(annotations_path)
+        elif self.task == 'MTATTop50Tags':
+            annotations = self.get_mtat_top50_annotations(annotations_path)
+            class2id = None
             
-            
+        self.annotations = annotations
             
         train_annotations = annotations[annotations["split"] == "train"]
         val_annotations = annotations[annotations["split"] == "val"]
@@ -42,10 +45,10 @@ class DatasetRouter:
                                                  target_length=self.target_length, n_augmentations=self.n_augmentations, extension=self.extension, sanity_check_n=self.sanity_check_n, train = True, class2id = class2id)
 
         self.val_dataset = val_dataset_class(data_dir=self.data_dir, annotations=val_annotations, augmentations=None, transform=False, target_sample_rate=self.target_sample_rate,
-                                             target_length=self.target_length, n_augmentations=self.n_augmentations, extension=self.extension, sanity_check_n=self.sanity_check_n, train = False, class2id = class2id)
+                                             target_length=self.target_length, n_augmentations=1, extension=self.extension, sanity_check_n=self.sanity_check_n, train = False, class2id = class2id)
         
         self.test_dataset = test_dataset_class(data_dir=self.data_dir, annotations=test_annotations, augmentations=None, transform=False, target_sample_rate=self.target_sample_rate,
-                                             target_length=self.target_length, n_augmentations=self.n_augmentations, extension=self.extension, sanity_check_n=self.sanity_check_n, train = False, class2id = class2id)
+                                             target_length=self.target_length, n_augmentations=1, extension=self.extension, sanity_check_n=self.sanity_check_n, train = False, class2id = class2id)
         
         
     def get_train_dataset(self):
@@ -88,15 +91,7 @@ class DatasetRouter:
             data = open(path.replace("split.tsv",f"{split}.tsv"), "r").readlines()
             all_paths = [line.split('\t')[3] for line in data[1:]]
             all_tags = [line.split('\t')[5:] for line in data[1:]]
-            # annotations = annotations.append(pd.DataFrame({"path":all_paths, "tags":all_tags, "split":split}))
-            # do this without append
-            
-            annotations.append(pd.DataFrame({"path":all_paths, "tags":all_tags, "split":split}))
-            
-            
-            
-            
-            
+            annotations.append(pd.DataFrame({"path":all_paths, "tags":all_tags, "split":split}))            
             for example in data[1:]:
                 tags = example.split('\t')[5:]
                 for tag in tags:
@@ -109,9 +104,42 @@ class DatasetRouter:
         if self.extension == "wav":
             annotations["path"] = annotations["path"].str.replace(".mp3", ".wav")
         print(annotations.head())
+        # replace validation with val
+        annotations["split"] = annotations["split"].str.replace("validation", "val")
+
 
         return annotations, class2id
         
         
+    def get_mtat_top50_annotations(self,annotations_path):
         
+        csv_path = '/import/c4dm-datasets/MagnaTagATune/annotations_final.csv'
+        annotations = pd.read_csv(csv_path, sep='\t')
+        labels = annotations.drop(columns=['mp3_path', 'clip_id'])
+
+        top_50_labels = labels.sum(axis=0).sort_values(ascending=False).head(50).index
+        labels = labels[top_50_labels]
+
+        label_sums = labels.sum(axis=1)
+        annotations = annotations[label_sums > 0]
+        labels = labels[label_sums > 0]
+
+        
+
+
+        annotations['labels'] = labels.values.tolist()
+        annotations = annotations[['mp3_path', 'labels']]
+
+        val_folders = ['c/']
+        test_folders = ['d/','e/', 'f/']
+
+        annotations['split'] = 'train'
+        annotations.loc[annotations['mp3_path'].str[:2].isin(val_folders), 'split'] = 'val'
+        annotations.loc[annotations['mp3_path'].str[:2].isin(test_folders), 'split'] = 'test'
+
+        if self.extension == "wav":
+            annotations["mp3_path"] = annotations["mp3_path"].str.replace(".mp3", ".wav")
+
+        return annotations
+
 

@@ -4,13 +4,13 @@ trainer:
   accelerator: auto
   strategy: ddp_find_unused_parameters_true
   devices:
-  - 5
+  - 6
   num_nodes: 1
   precision: null
   logger: null
   callbacks: null
   fast_dev_run: false
-  max_epochs: 1000
+  max_epochs: 30
   min_epochs: null
   max_steps: -1
   min_steps: null
@@ -70,32 +70,33 @@ model:
       frozen: true
       model_bandwidth: 3
   optimizer:
-    class_path: torch.optim.AdamW
+    class_path: torch.optim.Adam
     init_args:
-      lr: 0.0001
+      lr: 0.0003
       betas:
       - 0.9
       - 0.999
       eps: 1.0e-08
-      weight_decay: 0.01
+      weight_decay: 0.0
       amsgrad: false
-      maximize: false
       foreach: null
+      maximize: false
       capturable: false
       differentiable: false
       fused: null
   sequence_len: 1024
   debug: false
   adapt_sequence_len: true
-  checkpoint_path: MuMRVQ/fast-rain-337/checkpoint-step=22100.ckpt
-  task: GTZAN
-  n_classes: 10
-  mlp_head: false
+  checkpoint: MuMRVQ/dainty-wildflower-312/checkpoint-step=16600.ckpt
+  task: MTGTop50Tags
+  n_classes: 50
+  mlp_head: true
+  head_checkpoint: null
   freeze_encoder: true
   use_global_representation: avg
   use_embeddings: true
 data:
-  data_dir: /import/c4dm-datasets/gtzan_torchaudio/genres
+  data_dir: /import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/mp3
   annotations_path: ''
   batch_size: 64
   num_workers: 16
@@ -106,9 +107,10 @@ data:
   n_augmentations: 1
   transform: false
   sanity_check_n: null
-  extension: wav
+  extension: mp3
 log: 'true'
 log_model: false
 ckpt_path: MuMRVQ-finetuning
 resume_from_checkpoint: null
 resume_id: null
+test: false

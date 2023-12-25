@@ -46,7 +46,8 @@ model:
   n_classes: 10
   mlp_head: false
   freeze_encoder: true
-  checkpoint_path: null
+  checkpoint: null
+  head_checkpoint: null
   use_global_representation: avg
   sequence_len: 1024
   optimizer:
@@ -95,7 +96,7 @@ model:
 data:
   data_dir: "/import/c4dm-datasets/gtzan_torchaudio/genres"
   annotations_path: ""
-  batch_size: 64
+  batch_size: 32
   num_workers: 16
   target_sample_rate: 32000
   target_length: 6
@@ -110,3 +111,4 @@ data:
 log: false ## whether or not to log in wandb
 log_model: false
 ckpt_path : 'MuMRVQ-finetuning'
+test: false

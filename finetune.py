@@ -19,16 +19,48 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
             config = self.parser.dump(self.config, skip_none=False)
             with open(self.config_filename, "r") as config_file:
                 config = yaml.load(config_file, Loader=yaml.FullLoader)
-                trainer.logger.experiment.config.update(config)
+                trainer.logger.experiment.config.update(config, allow_val_change=True)
                 
-            
-            previous_experiment_name = config['model']['checkpoint_path'].split('/')[-2]
+            if config['model']['checkpoint'] is None:
+                previous_experiment_name = 'from_scratch'
+            else:
+                previous_experiment_name = config['model']['checkpoint'].split('/')[-2]
+            new_experiment_name = experiment_name+f'_finetune_{previous_experiment_name}_{config["model"]["task"]}'
                 
-            with open(os.path.join(os.path.join(self.config['ckpt_path'], experiment_name+f'_finetune_{previous_experiment_name}_{config["model"]["task"]}'), "config.yaml"), 'w') as outfile:
+            with open(os.path.join(os.path.join(self.config['ckpt_path'], new_experiment_name), "config.yaml"), 'w') as outfile:
                 yaml.dump(config, outfile, default_flow_style=False)
 
             
-            trainer.logger.experiment.name = experiment_name+f'_finetune_{previous_experiment_name}_{config["model"]["task"]}'
+            trainer.logger.experiment.name = new_experiment_name
+            
+            #add a checkpoint callback that saves the model every epoch
+            ## and that saves the best model based on validation loss
+            
+            recent_callback = ModelCheckpoint(
+                dirpath=os.path.join(self.config['ckpt_path'], new_experiment_name),
+                filename='checkpoint-{step}',  # This means all checkpoints are saved, not just the top k
+                every_n_epochs=200  # Replace with your desired value
+            )
+            
+            best_callback = ModelCheckpoint(
+                monitor='train_loss_epoch',
+                dirpath=os.path.join(self.config['ckpt_path'], new_experiment_name),
+                filename='best-{step}',
+                save_top_k=1,
+                mode='min',
+                every_n_epochs=1
+            )
+            
+            best_callback = ModelCheckpoint(
+                monitor='val_loss',
+                dirpath=os.path.join(self.config['ckpt_path'], new_experiment_name),
+                filename='best-val-{step}',
+                save_top_k=1,
+                mode='min',
+                every_n_epochs=1
+            )
+            
+            trainer.callbacks = trainer.callbacks[:-1]+[recent_callback, best_callback]
 
 
 class MyLightningCLI(LightningCLI):
@@ -54,6 +86,7 @@ class MyLightningCLI(LightningCLI):
         parser.add_argument("--ckpt_path", default="MuMRVQ_checkpoints")
         parser.add_argument("--resume_from_checkpoint", default=None)
         parser.add_argument("--resume_id", default=None)
+        parser.add_argument('--test', default=False)
 
 if __name__ == "__main__":
     
@@ -64,11 +97,13 @@ if __name__ == "__main__":
     cli.instantiate_classes()
     
     # get the name of the model loaded from checkpoint
-    if cli.config.model.checkpoint_path is not None:
-        previous_experiment_name = cli.config.model.checkpoint_path.split('/')[-2]
+    if cli.config.model.checkpoint is not None:
+        previous_experiment_name = cli.config.model.checkpoint.split('/')[-2]
+    else:
+        previous_experiment_name = 'from_scratch'
 
     if cli.config.log:
-        logger = WandbLogger(project="MuMRVQ-finetuning")
+        logger = WandbLogger(project="MuMRVQ-finetuning",id = cli.config.resume_id)
         experiment_name = logger.experiment.name+f"_finetune_{previous_experiment_name}_{cli.config['model']['task']}"
         ckpt_path = cli.config.ckpt_path
     else:
@@ -82,5 +117,6 @@ if __name__ == "__main__":
     except:
         pass
     
-
-    cli.trainer.fit(model=cli.model, datamodule=cli.datamodule)
+    if not cli.config.test:    
+        cli.trainer.fit(model=cli.model, datamodule=cli.datamodule)
+    cli.trainer.test(model=cli.model, datamodule=cli.datamodule)

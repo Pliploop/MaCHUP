@@ -1,2 +1,3 @@
 from .GTZAN import GTZANTestDataset, GTZANTrainDataset
 from .MTG_top50tags import MTGTop50TagsTrainDataset, MTGTop50TagsTestDataset
+from .MTAT_top50tags import MTATTop50TagsTrainDataset, MTATTop50TagsTestDataset

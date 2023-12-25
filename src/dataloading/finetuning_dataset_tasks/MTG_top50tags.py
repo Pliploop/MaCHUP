@@ -115,7 +115,7 @@ class MTGTop50TagsTestDataset(MTGTop50TagsTrainDataset):
         encodec_audio = torch.cat(torch.split(encodec_audio, self.target_n_samples_one, dim=1)[:-1],dim=0)
         
         return {
-            "wav": encodec_audio,
+            "wav": encodec_audio.unsqueeze(1),
             "label": label,
             "original_lens": self.target_n_samples
         }
