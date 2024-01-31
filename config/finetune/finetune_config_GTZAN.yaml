@@ -110,5 +110,5 @@ data:
 
 log: false ## whether or not to log in wandb
 log_model: false
-ckpt_path : 'MuMRVQ-finetuning'
+ckpt_path : '/import/research_c4dm/jpmg86/MaCHUP/MaCHUP-finetune'
 test: false

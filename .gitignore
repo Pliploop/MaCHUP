@@ -3,6 +3,8 @@ wandb
 *.ipynb
 MuMRVQ
 MuMRVQ-finetuning
+*.ipynb
+finetune_dataset_testing.ipynb
 *.pyc
 
 # Byte-compiled / optimized / DLL files

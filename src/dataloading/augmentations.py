@@ -1,229 +1,227 @@
+from torch_audiomentations.core.transforms_interface import BaseWaveformTransform
+from torch_audiomentations.utils.object_dict import ObjectDict
+
+from torch import Tensor
+from typing import Optional, Tuple, Union, List
+from random import choices
 import torch
-import random
-from torchaudio.transforms import Vol
 import numpy as np
-from julius.filters import highpass_filter, lowpass_filter
 
 
-class RandomApply(torch.nn.Module):
-    """Apply randomly a list of transformations with a given probability.
-
-    .. note::
-        In order to script the transformation, please use ``torch.nn.ModuleList`` as input instead of list/tuple of
-        transforms as shown below:
-
-        >>> transforms = transforms.RandomApply(torch.nn.ModuleList([
-        >>>     transforms.ColorJitter(),
-        >>> ]), p=0.3)
-        >>> scripted_transforms = torch.jit.script(transforms)
-
-        Make sure to use only scriptable transformations, i.e. that work with ``torch.Tensor``, does not require
-        `lambda` functions or ``PIL.Image``.
-
-    Args:
-        transforms (list or tuple or torch.nn.Module): list of transformations
-        p (float): probability
-    """
-
-    def __init__(self, transforms, p=0.5):
-        super().__init__()
-        self.transforms = transforms
-        self.p = p
-
-    def forward(self, img):
-        if self.p < torch.rand(1):
-            return img
-        for t in self.transforms:
-            img = t(img)
-        return img
-
-    def __repr__(self):
-        format_string = self.__class__.__name__ + "("
-        format_string += "\n    p={}".format(self.p)
-        for t in self.transforms:
-            format_string += "\n"
-            format_string += "    {0}".format(t)
-        format_string += "\n)"
-        return format_string
-class Compose:
-    """Data augmentation module that transforms any given data example with a chain of audio augmentations."""
-
-    def __init__(self, transforms):
-        self.transforms = transforms
-
-    def __call__(self, x):
-        x = self.transform(x)
-        return x
-
-    def __repr__(self):
-        format_string = self.__class__.__name__ + "("
-        for t in self.transforms:
-            format_string += "\n"
-            format_string += "\t{0}".format(t)
-        format_string += "\n)"
-        return format_string
-
-    def transform(self, x):
-        for t in self.transforms:
-            x = t(x)
-        return x
-
-
-class ComposeMany(Compose):
-    """
-    Data augmentation module that transforms any given data example randomly
-    resulting in N correlated views of the same example
+class Delay(BaseWaveformTransform):
     
-    
-    
-    """
+    supported_modes = {"per_batch", "per_example", "per_channel"}
 
-    def __init__(self, transforms, num_augmented_samples):
-        self.transforms = transforms
-        self.num_augmented_samples = num_augmented_samples
+    supports_multichannel = True
+    requires_sample_rate = True
 
-    def __call__(self, x):
-        samples = []
-        for _ in range(self.num_augmented_samples):
-            samples.append(self.transform(x).unsqueeze(dim=0).clone())
-        return torch.cat(samples, dim=0)
-    
-    
-class ComposeManySplit(Compose):
-    """
-    Data augmentation module that transforms any given data batch randomly and returns the augmented batch
-    
-    input can be channelless or have channels but the first dimension must be the batch size.
-    output is of shape [N_augmentations, samples] is channelless, [N_augmentations, channels, samples] if not
-    """
+    supports_target = True
+    requires_target = False
 
-    def __init__(self, transforms):
-        self.transforms = transforms
-
-    def __call__(self, x):
-        samples = []
-        for aug in range(x.shape[0]):
-            samples.append(self.transform(x[aug,:]).unsqueeze(dim=0).clone())
-        return torch.cat(samples, dim=0)
-
-class FrequencyFilter(torch.nn.Module):
     def __init__(
         self,
-        sample_rate: int,
-        freq_low: float,
-        freq_high: float,
+        min_delay_ms: float = 100.0,
+        max_delay_ms: float = 500.0,
+        mode: str = "per_example",
+        p: float = 0.5,
+        p_mode: str = None,
+        sample_rate: int = None,
+        target_rate: int = None,
+        output_type: Optional[str] = None,
+        volume_factor: float = 0.5,
+        repeats: int = 2,
+        attenuation: float = 0.5,
+        debug = False
     ):
-        super().__init__()
-        self.sample_rate = sample_rate
-        self.freq_low = freq_low
-        self.freq_high = freq_high
-
-    def cutoff_frequency(self, frequency: float) -> float:
-        return frequency / self.sample_rate
-
-    def sample_uniform_frequency(self):
-        return random.uniform(self.freq_low, self.freq_high)
-
-
-class HighPassFilter(FrequencyFilter):
-    def __init__(
-        self,
-        sample_rate: int,
-        freq_low: float = 200,
-        freq_high: float = 1200,
-    ):
-        super().__init__(sample_rate, freq_low, freq_high)
-
-    def forward(self, audio: torch.Tensor) -> torch.Tensor:
-        frequency = self.sample_uniform_frequency()
-        cutoff = self.cutoff_frequency(frequency)
-        audio = highpass_filter(audio, cutoff=cutoff)
-        return audio
-
-
-class LowPassFilter(FrequencyFilter):
-    def __init__(
-        self,
-        sample_rate: int,
-        freq_low: float = 2200,
-        freq_high: float = 4000,
-    ):
-        super().__init__(sample_rate, freq_low, freq_high)
-
-    def forward(self, audio: torch.Tensor) -> torch.Tensor:
-        frequency = self.sample_uniform_frequency()
-        cutoff = self.cutoff_frequency(frequency)
-        audio = lowpass_filter(audio, cutoff=cutoff)
-        return audio
-
-
-
-class PolarityInversion(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, audio):
-        audio = torch.neg(audio)
-        return audio
-
-
-
-class Noise(torch.nn.Module):
-    def __init__(self, min_snr=0.0001, max_snr=0.01):
         """
-        :param min_snr: Minimum signal-to-noise ratio
-        :param max_snr: Maximum signal-to-noise ratio
+        :param sample_rate:
+        :param min_delay_ms: Minimum delay in milliseconds (default 20.0)
+        :param max_delay_ms: Maximum delay in milliseconds (default 100.0)
+        :param mode: ``per_example``, ``per_channel``, or ``per_batch``. Default ``per_example``.
+        :param p:
+        :param p_mode:
+        :param target_rate:
         """
-        super().__init__()
-        self.min_snr = min_snr
-        self.max_snr = max_snr
-
-    def forward(self, audio):
-        std = torch.std(audio)
-        noise_std = random.uniform(self.min_snr * std, self.max_snr * std)
-
-        noise = np.random.normal(0.0, noise_std, size=audio.shape).astype(np.float32)
-
-        return audio + noise
-
-
-
-class HighLowPass(torch.nn.Module):
-    def __init__(
-        self,
-        sample_rate: int,
-        lowpass_freq_low: float = 2200,
-        lowpass_freq_high: float = 4000,
-        highpass_freq_low: float = 200,
-        highpass_freq_high: float = 1200,
-    ):
-        super().__init__()
-        self.sample_rate = sample_rate
-
-        self.high_pass_filter = HighPassFilter(
-            sample_rate, highpass_freq_low, highpass_freq_high
-        )
-        self.low_pass_filter = LowPassFilter(
-            sample_rate, lowpass_freq_low, lowpass_freq_high
+        super().__init__(
+            mode=mode,
+            p=p,
+            p_mode=p_mode,
+            sample_rate=sample_rate,
+            target_rate=target_rate,
+            output_type=output_type,
         )
 
-    def forward(self, audio):
-        highlowband = random.randint(0, 1)
-        if highlowband == 0:
-            audio = self.high_pass_filter(audio)
-        else:
-            audio = self.low_pass_filter(audio)
-        return audio
+        if min_delay_ms > max_delay_ms:
+            raise ValueError("max_delay_ms must be > min_delay_ms")
+        if not sample_rate:
+            raise ValueError("sample_rate is invalid.")
+        self._sample_rate = sample_rate
+        self._max_delay_ms = max_delay_ms
+        self._min_delay_ms = min_delay_ms
+        self._max_delay_samples = int(max_delay_ms * sample_rate / 1000)
+        self._min_delay_samples = int(min_delay_ms * sample_rate / 1000)
+        self._mode = mode
+        self._volume_factor = volume_factor
+        self._repeats = repeats
+        self._attenuation = attenuation
+        self.debug = debug
 
+    def randomize_parameters(
+        self,
+        samples: Tensor = None,
+        sample_rate: Optional[int] = None,
+        targets: Optional[Tensor] = None,
+        target_rate: Optional[int] = None,
+    ):
+        """
+        :param samples: (batch_size, num_channels, num_samples)
+        :param sample_rate:
+        """
+        batch_size, num_channels, num_samples = samples.shape
 
+        if self._mode == "per_example":
+            self.transform_parameters["delays"] = choices(
+                range(self._min_delay_samples, self._max_delay_samples + 1), k=batch_size
+            )
+            self.transform_parameters['volume_factors'] = choices([self._volume_factor-0.2, self._volume_factor+0.2],k=batch_size)
+            self.transform_parameters['repeats'] = choices([self._repeats-1, self._repeats+1],k=batch_size)
+            self.transform_parameters['attenuation'] = choices([self._attenuation-0.2, self._attenuation+0.2],k=batch_size)
+        elif self._mode == "per_channel":
+            self.transform_parameters["delays"] = list(
+                zip(
+                    *[
+                        choices(
+                            range(self._min_delay_samples, self._max_delay_samples + 1),
+                            k=batch_size,
+                        )
+                        for i in range(num_channels)
+                    ]
+                )
+            )
+            
+            self.transform_parameters['volume_factors'] = list(
+                zip(
+                    *[
+                        choices(
+                            [self._volume_factor-0.2, self._volume_factor+0.2],
+                            k=batch_size,
+                        )
+                        for i in range(num_channels)
+                    ]
+                )
+            )
+            
+            self.transform_parameters['repeats'] = list(
+                zip(
+                    *[
+                        choices(
+                            [self._repeats-1, self._repeats+1],
+                            k=batch_size,
+                        )
+                        for i in range(num_channels)
+                    ]
+                )
+            )
+            
+            self.transform_parameters['attenuation'] = list(
+                zip(
+                    *[
+                        choices(
+                            [self._attenuation-0.2, self._attenuation+0.2],
+                            k=batch_size,
+                        )
+                        for i in range(num_channels)
+                    ]
+                )
+            )
+            
+        elif self._mode == "per_batch":
+            self.transform_parameters["delays"] = choices(
+                range(self._min_delay_samples, self._max_delay_samples + 1), k=1
+            )
+            self.transform_parameters['volume_factors'] = choices([self._volume_factor-0.2, self._volume_factor+0.2],k=1)
+            self.transform_parameters['repeats'] = choices([self._repeats-1, self._repeats+1],k=1)
+            self.transform_parameters['attenuation'] = choices([self._attenuation-0.2, self._attenuation+0.2],k=1)
+            
+    def apply_transform(
+        
+        self,
+        samples: Tensor = None,
+        sample_rate: Optional[int] = None,
+        targets: Optional[Tensor] = None,
+        target_rate: Optional[int] = None,
+    ) -> ObjectDict:
+        """
+        :param samples: (batch_size, num_channels, num_samples)
+        :param sample_rate:
+        """
+        batch_size, num_channels, num_samples = samples.shape
 
-class Gain(torch.nn.Module):
-    def __init__(self, min_gain: float = -20.0, max_gain: float = -1):
-        super().__init__()
-        self.min_gain = min_gain
-        self.max_gain = max_gain
+        if sample_rate is not None and sample_rate != self._sample_rate:
+            raise ValueError(
+                "sample_rate must match the value of sample_rate "
+                + "passed into the PitchShift constructor"
+            )
+        sample_rate = self.sample_rate
 
-    def forward(self, audio: torch.Tensor) -> torch.Tensor:
-        gain = random.uniform(self.min_gain, self.max_gain)
-        audio = Vol(gain, gain_type="db")(audio)
-        return audio
+        if self._mode == "per_example":
+            for i in range(batch_size):
+                samples[i, ...] = self.delay(
+                    samples[i][None],
+                    self.transform_parameters["delays"][i],
+                    self.transform_parameters['volume_factors'][i],
+                    self.transform_parameters['repeats'][i],
+                    self.transform_parameters['attenuation'][i],
+                    sample_rate,
+                )[0]
+
+        elif self._mode == "per_channel":
+            for i in range(batch_size):
+                for j in range(num_channels):
+                    samples[i, j, ...] = self.delay(
+                        samples[i][j][None][None],
+                        self.transform_parameters["delays"][i][j],
+                        self.transform_parameters['volume_factors'][i][j],
+                        self.transform_parameters['repeats'][i][j],
+                        self.transform_parameters['attenuation'][i][j],
+                        sample_rate,
+                    )[0][0]
+
+        elif self._mode == "per_batch":
+            samples = self.delay(
+                samples, self.transform_parameters["delays"][0], self.transform_parameters['volume_factors'][0], 
+                self.transform_parameters['repeats'][0],
+                self.transform_parameters['attenuation'][0],
+                sample_rate
+            )
+
+        return ObjectDict(
+            samples=samples,
+            sample_rate=sample_rate,
+            targets=targets,
+            target_rate=target_rate,
+        )
+        
+    def delay(self,samples: Tensor, delay_samples: int, volume_factor: float , repeats, attenuation, sample_rate: int) -> Tensor:
+        
+        ## add the original signal delayed by delay_samples to the original signal
+        ## do this operation repeats times and each time attenuate the delayed signal by attenuation factor
+        ## reduce the whole delayed signal by volume_factor
+        ## then add both signals together and truncate to be the same length as the original signal
+        
+        batch_size, num_channels, num_samples = samples.shape
+        
+        delayed_signal = torch.zeros(batch_size, num_channels, num_samples + repeats * delay_samples, device = samples.device)
+        
+        for i in range(repeats):
+            delayed_signal[:,:,i*delay_samples:i*delay_samples+num_samples] += samples * attenuation ** (i)
+            
+        delayed_signal = delayed_signal[:,:,:num_samples]
+        
+        samples = (samples + volume_factor * delayed_signal)/2
+        
+        if self.debug:
+            ## pretty print the volume factor, number of repeats, and attenuation factor
+            print(f"volume_factor: {volume_factor}, repeats: {repeats}, attenuation: {attenuation}")
+
+        return samples

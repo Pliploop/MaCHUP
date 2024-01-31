@@ -42,7 +42,7 @@ trainer:
   default_root_dir: null
 model:
   use_embeddings: true
-  task: MTGTop50Tags
+  task: MTATTop50Tags
   n_classes: 50
   mlp_head: true
   freeze_encoder: true
@@ -53,7 +53,8 @@ model:
   optimizer:
     class_path: torch.optim.Adam
     init_args:
-      lr: 0.0003
+      lr: 0.0001
+      weight_decay: 0.000001
 
   encoder:
     class_path: src.models.Transformer.Encoder.VanillaEncoder
@@ -93,9 +94,9 @@ model:
       sample_rate: 32000
   
 data:
-  data_dir: "/import/c4dm-datasets/mtg-jamendo-raw/mtg-jamendo-dataset/mp3"
+  data_dir: "/import/research_c4dm/JulienMarcoChrisRMRI/MTAT_wav"
   annotations_path: ""
-  batch_size: 64
+  batch_size: 96
   num_workers: 16
   target_sample_rate: 32000
   target_length: 6
@@ -104,8 +105,8 @@ data:
   test_split: 0.1
   transform: false
   sanity_check_n: null
-  extension: mp3
-  task: MTGTop50Tags
+  extension: wav
+  task: MTATTop50Tags
 
 log: false ## whether or not to log in wandb
 log_model: false

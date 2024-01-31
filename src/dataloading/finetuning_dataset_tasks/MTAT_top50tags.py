@@ -39,23 +39,34 @@ class MTATTop50TagsTrainDataset(Dataset):
         audio_path = self.annotations.iloc[idx]["mp3_path"]
 
         file_path = os.path.join(self.data_dir, audio_path)
-        label = self.annotations.iloc[idx]["labels"]
+        label = torch.tensor(self.annotations.iloc[idx]["labels"])
 
-        info = sf.info(file_path)
+        try:
+            info = sf.info(file_path)
+        except:
+            print(file_path)
+            return (self[idx+1])
         sample_rate = info.samplerate
         if self.extension == "mp3":
             n_frames = info.frames - 8192
         else:
             n_frames = info.frames
-
+            
         if n_frames < self.target_n_samples/self.target_sample_rate * sample_rate:
             return (self[idx+1])
         new_target_n_samples = int(
             self.target_n_samples/self.target_sample_rate * sample_rate)
         start_idx = np.random.randint(
             low=0, high=n_frames - new_target_n_samples)
-        waveform, sample_rate = sf.read(
-            file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
+        
+        
+        
+        try:
+            waveform, sample_rate = sf.read(
+                file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
+        except:
+            print(file_path)
+            return (self[idx+1])
 
         waveform = torch.Tensor(waveform.transpose())
         encodec_audio = convert_audio(
@@ -66,7 +77,7 @@ class MTATTop50TagsTrainDataset(Dataset):
 
         return {
             "wav": encodec_audio,
-            "label": label,
+            "label": label.int(),
             "original_lens": self.target_n_samples
         }
 
@@ -81,13 +92,22 @@ class MTATTop50TagsTestDataset(MTATTop50TagsTrainDataset):
         audio_path = self.annotations.iloc[idx]["mp3_path"]
 
         file_path = os.path.join(self.data_dir, audio_path)
-        label = self.annotations.iloc[idx]["labels"]
+        label = torch.tensor(self.annotations.iloc[idx]["labels"])
 
-        info = sf.info(file_path)
-        sample_rate = info.samplerate
+        try:
+            info = sf.info(file_path)
+            sample_rate = info.samplerate
+        except:
+            print(file_path)
+            return (self[idx+1])
 
-        waveform, sample_rate = sf.read(
-            file_path, dtype='float32', always_2d=True)
+
+        try:
+            waveform, sample_rate = sf.read(
+                file_path, dtype='float32', always_2d=True)
+        except:
+            print(file_path)
+            return (self[idx+1])
 
         waveform = torch.Tensor(waveform.transpose())
         encodec_audio = convert_audio(
@@ -100,6 +120,6 @@ class MTATTop50TagsTestDataset(MTATTop50TagsTrainDataset):
 
         return {
             "wav": encodec_audio.unsqueeze(1),
-            "label": label,
+            "label": label.int(),
             "original_lens": self.target_n_samples
         }

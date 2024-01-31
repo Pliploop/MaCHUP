@@ -22,7 +22,7 @@ trainer:
   val_check_interval: null
   check_val_every_n_epoch: 1
   num_sanity_val_steps: null
-  log_every_n_steps: 10
+  log_every_n_steps: 50
   enable_checkpointing: false
   enable_progress_bar: true
   enable_model_summary: true
@@ -86,7 +86,7 @@ model:
   debug: false
   use_embeddings: true
   masked_loss_ratio: 0.8 # when 1, only masked tokens are counted for the MLM loss
-  contrastive_to_masked_ratio: 0.1 #when 1, only the contrastive loss is counted. When 0, only the masked loss is counted
+  contrastive_to_masked_ratio: 0.5 #when 1, only the contrastive loss is counted. When 0, only the masked loss is counted
   global_vs_local_contrastive_loss_ratio: 0 # when 1, only the global contrastive loss is counted. When 0, only the local contrastive loss is counted
   global_class_vs_average_contrastive_loss_ratio: 0 # when 1, the class tokens are used for global contrastive loss. when 0, the average of the sequence is used.
   masked_objective: true # whether or not to use the masked objective
@@ -109,10 +109,10 @@ data:
   target_length: 6
   n_augmentations: 2
   validation_split: 0.1
-  transform: false
+  transform: true
   sanity_check_n: null
 log: false ## whether or not to log in wandb
 log_model: false
-ckpt_path: "MuMRVQ"
+ckpt_path: "/import/research_c4dm/jpmg86/MaCHUP/MaCHUP-pretrain"
 resume_from_checkpoint: null
 resume_id: null

@@ -4,7 +4,7 @@ from pytorch_lightning.cli import LightningCLI
 from pytorch_lightning.cli import SaveConfigCallback
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from src.dataloading.finetuning_datasets import FineTuneDataModule
 import yaml
 import os
@@ -36,31 +36,7 @@ class LoggerSaveConfigCallback(SaveConfigCallback):
             #add a checkpoint callback that saves the model every epoch
             ## and that saves the best model based on validation loss
             
-            recent_callback = ModelCheckpoint(
-                dirpath=os.path.join(self.config['ckpt_path'], new_experiment_name),
-                filename='checkpoint-{step}',  # This means all checkpoints are saved, not just the top k
-                every_n_epochs=200  # Replace with your desired value
-            )
             
-            best_callback = ModelCheckpoint(
-                monitor='train_loss_epoch',
-                dirpath=os.path.join(self.config['ckpt_path'], new_experiment_name),
-                filename='best-{step}',
-                save_top_k=1,
-                mode='min',
-                every_n_epochs=1
-            )
-            
-            best_callback = ModelCheckpoint(
-                monitor='val_loss',
-                dirpath=os.path.join(self.config['ckpt_path'], new_experiment_name),
-                filename='best-val-{step}',
-                save_top_k=1,
-                mode='min',
-                every_n_epochs=1
-            )
-            
-            trainer.callbacks = trainer.callbacks[:-1]+[recent_callback, best_callback]
 
 
 class MyLightningCLI(LightningCLI):
@@ -117,6 +93,45 @@ if __name__ == "__main__":
     except:
         pass
     
+    
+    
+    if cli.trainer.logger is not None:
+        recent_callback = ModelCheckpoint(
+                    dirpath=os.path.join(cli.config.ckpt_path, experiment_name),
+                    filename='checkpoint-{step}',  # This means all checkpoints are saved, not just the top k
+                    every_n_epochs=200  # Replace with your desired value
+                )
+                
+        best_train_callback = ModelCheckpoint(
+            monitor='train_loss_epoch',
+            dirpath=os.path.join(cli.config.ckpt_path, experiment_name),
+            filename='best-{step}',
+            save_top_k=1,
+            mode='min',
+            every_n_epochs=1
+        )
+        
+        best_callback = ModelCheckpoint(
+            monitor='val_loss',
+            dirpath=os.path.join(cli.config.ckpt_path, experiment_name),
+            filename='best-val-{step}',
+            save_top_k=1,
+            mode='min',
+            every_n_epochs=1
+        )
+        
+        early_stopping_callback = EarlyStopping(
+            monitor='val_loss',
+            patience=5,
+            mode='min'
+        )
+        
+        cli.trainer.callbacks = cli.trainer.callbacks[:-1]+[recent_callback, best_callback, best_train_callback]
+    
     if not cli.config.test:    
         cli.trainer.fit(model=cli.model, datamodule=cli.datamodule)
+        cli.model.load_head_weights(best_callback.best_model_path)
+        
+    # load the best validation model into the head
+    
     cli.trainer.test(model=cli.model, datamodule=cli.datamodule)

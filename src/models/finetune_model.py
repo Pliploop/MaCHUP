@@ -118,7 +118,7 @@ class MaCHUPFinetune(LightningModule):
         
         if self.task == "GTZAN":
             self.loss_fn = nn.CrossEntropyLoss()
-        if self.task == "MTGTop50Tags":
+        if self.task == "MTGTop50Tags" or self.task == "MTATTop50Tags":
             self.loss_fn = nn.BCEWithLogitsLoss()
             self.y_out = []
             self.gt_out = []
@@ -179,6 +179,8 @@ class MaCHUPFinetune(LightningModule):
             return self.GTZAN_train_step(batch, batch_idx)
         if self.task == "MTGTop50Tags":
             return self.mtg_top50_train_step(batch, batch_idx)
+        if self.task == "MTATTop50Tags":
+            return self.mtg_top50_train_step(batch, batch_idx)
         
     
     def validation_step(self, batch, batch_idx):
@@ -186,21 +188,23 @@ class MaCHUPFinetune(LightningModule):
             return self.GTZAN_validation_step(batch, batch_idx)
         if self.task == "MTGTop50Tags":
             return self.mtg_top50_validation_step(batch, batch_idx)
+        if self.task == "MTATTop50Tags":
+            return self.mtg_top50_validation_step(batch, batch_idx)
         
     def test_step(self, batch, batch_idx):
         if self.task == "GTZAN":
             return self.GTZAN_test_step(batch, batch_idx)
         if self.task == "MTGTop50Tags":
             return self.mtg_top50_test_step(batch, batch_idx)
+        if self.task == "MTATTop50Tags":
+            return self.mtg_top50_test_step(batch, batch_idx)
         
     def on_test_epoch_end(self):
-        if self.task == "MTGTop50Tags":
+        if self.task == "MTGTop50Tags" or self.task == "MTATTop50Tags":
             self.y_out = torch.cat(self.y_out, dim=0)
             self.gt_out = torch.cat(self.gt_out, dim=0)
             auroc = self.auroc(preds = self.y_out, target = self.gt_out)
             ap = self.ap(preds = self.y_out, target = self.gt_out)
-            print("AUROC", auroc)
-            print("AP", ap)
             self.log('test_auroc', auroc, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
             self.log('test_ap', ap, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
         if self.task == "GTZAN":
@@ -220,14 +224,12 @@ class MaCHUPFinetune(LightningModule):
         acc = accuracy(head_out, y, num_classes=self.n_classes,task="multiclass").item()
         prec = precision(head_out, y, num_classes=self.n_classes,task="multiclass").item()
         rec = recall(head_out, y, num_classes=self.n_classes,task="multiclass").item()
-        # auroc = roc_auc_score_multiclass(y, head_out)
         
         # log all the metrics here
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log('train_accuracy', acc, on_step=True, on_epoch=True, prog_bar=True, sync_dist=  True)
         self.log('train_precision', prec, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
         self.log('train_recall', rec, on_step=True, on_epoch=True, prog_bar=False, sync_dist=True)
-        # self.log('train_auroc', auroc, on_step=True, on_epoch=True, prog_bar=False)
         
         
         return loss
@@ -247,7 +249,6 @@ class MaCHUPFinetune(LightningModule):
         acc = accuracy(head_out, y, num_classes=self.n_classes,task="multiclass").item()
         prec = precision(head_out, y, num_classes=self.n_classes,task="multiclass").item()
         rec = recall(head_out, y, num_classes=self.n_classes,task="multiclass").item()
-        # auroc = roc_auc_score_multiclass(y, head_out)
         
         
         # log all the metrics here
@@ -255,7 +256,6 @@ class MaCHUPFinetune(LightningModule):
         self.log('val_accuracy', acc, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log('val_precision', prec, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
         self.log('val_recall', rec, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
-        # self.log('val_auroc', auroc, on_step=True, on_epoch=True, prog_bar=False)
         
         
         return loss
@@ -308,7 +308,9 @@ class MaCHUPFinetune(LightningModule):
             print("head_out shape", head_out.shape)
             print("y shape", y.shape)
         
-        loss = self.loss_fn(head_out, y)
+        
+        
+        loss = self.loss_fn(input = head_out, target = y.float())
         
         
         # get all the metrics here
@@ -332,8 +334,9 @@ class MaCHUPFinetune(LightningModule):
         
         
         encoded, head_out = self(x)
+      
         
-        loss = self.loss_fn(head_out, y)
+        loss = self.loss_fn(input = head_out, target = y.float())
         
         
         auroc = self.auroc(preds = sigmoid(head_out), target = y.int())
@@ -364,7 +367,7 @@ class MaCHUPFinetune(LightningModule):
         head_out = head_out.unsqueeze(0)
         y = y.unsqueeze(0)
         
-        loss = self.loss_fn(head_out, y)
+        loss = self.loss_fn(head_out, y.float())
         
         
         self.y_out.append(sigmoid(head_out))

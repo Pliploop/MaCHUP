@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import soundfile as sf
 from torch_audiomentations import *
-
+from src.dataloading.augmentations import *
 
 class CustomAudioDataset(Dataset):
     def __init__(self, data_dir, file_list=None, augmentations=None, transform=True, target_sample_rate=24000, target_length=20, train=True, n_augmentations=1, extension="wav", sanity_check_n = None):
@@ -57,10 +57,16 @@ class CustomAudioDataset(Dataset):
         file_path = os.path.join(self.data_dir, file_name)
 
         # waveform, sample_rate = torchaudio.load(file_path)
-        info = sf.info(file_path)
-        sample_rate = info.samplerate
-        n_frames = info.frames
+        try:
+            info = sf.info(file_path)
+            sample_rate = info.samplerate
+        except:
+            return (self[idx+1])
         
+        if self.extension == "mp3":
+            n_frames = info.frames - 8192
+        else:
+            n_frames = info.frames
         
         new_target_n_samples = int(
             self.target_n_samples/self.target_sample_rate * sample_rate)
@@ -68,9 +74,11 @@ class CustomAudioDataset(Dataset):
         if n_frames <= new_target_n_samples:
             return (self[idx+1])
         start_idx = np.random.randint(low=0, high=n_frames - new_target_n_samples)
-        waveform, sample_rate = sf.read(
-            file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
-
+        try:
+            waveform, sample_rate = sf.read(
+                file_path, start=start_idx, stop=start_idx + new_target_n_samples, dtype='float32', always_2d=True)
+        except:
+            return (self[idx+1])
 
         waveform = torch.Tensor(waveform.transpose())
         encodec_audio = convert_audio(
@@ -84,8 +92,6 @@ class CustomAudioDataset(Dataset):
             waveform = self.augmentations(waveform)
             
         ## end up with a [x_batch, 1, T] tensor
-        
-            
 
         return {
             "wav": waveform,
@@ -94,7 +100,7 @@ class CustomAudioDataset(Dataset):
 
 
 class CustomAudioDataModule(pl.LightningDataModule):
-    def __init__(self, train_data_dir=None, val_data_dir=None, batch_size=64, num_workers=0, target_sample_rate=24000, target_length=20, validation_split=None, n_augmentations=1, transform=True, sanity_check_n=None):
+    def __init__(self, train_data_dir=None, val_data_dir=None, batch_size=64, num_workers=0, target_sample_rate=24000, target_length=20, validation_split=None, n_augmentations=1, transform=True, sanity_check_n=None, extension="wav"):
         super().__init__()
         self.train_data_dir = train_data_dir
         self.val_data_dir = val_data_dir
@@ -107,6 +113,7 @@ class CustomAudioDataModule(pl.LightningDataModule):
         self.n_augmentations = n_augmentations
         self.transform = transform
         self.sanity_check_n = sanity_check_n
+        self.extension=extension
 
         self.target_sample_rate = target_sample_rate
         self.target_length = target_length
@@ -120,15 +127,17 @@ class CustomAudioDataModule(pl.LightningDataModule):
                         sample_rate=self.target_sample_rate
                     ),
                     PolarityInversion(p=0.6, sample_rate=self.target_sample_rate),
-                    AddColoredNoise(p=0.3, sample_rate=self.target_sample_rate),
-                    PitchShift(p=0.3, sample_rate = self.target_sample_rate),
+                    AddColoredNoise(p=0.6, sample_rate=self.target_sample_rate),
                     OneOf([
                         BandPassFilter(p=0.3, sample_rate = self.target_sample_rate),
                         BandStopFilter(p=0.3, sample_rate = self.target_sample_rate),
                         HighPassFilter(p=0.3, sample_rate = self.target_sample_rate),
                         LowPassFilter(p=0.3, sample_rate = self.target_sample_rate),
-                    ])
-                ]
+                    ]),
+                    PitchShift(p=0.6, sample_rate = self.target_sample_rate),
+                    Delay(p = 0.6, sample_rate = self.target_sample_rate),
+                ],
+                p=0.8,
             )
 
         self.val_transforms = None
@@ -136,7 +145,7 @@ class CustomAudioDataModule(pl.LightningDataModule):
     def setup(self, stage=None):
         if stage == 'fit' or stage is None:
             self.train_dataset = CustomAudioDataset(data_dir=self.train_data_dir, augmentations=self.train_transforms, target_sample_rate=self.target_sample_rate,
-                                                    target_length=self.target_length, n_augmentations=self.n_augmentations, transform=self.transform, sanity_check_n=self.sanity_check_n)
+                                                    target_length=self.target_length, n_augmentations=self.n_augmentations, transform=self.transform, sanity_check_n=self.sanity_check_n, extension=self.extension)
             # self.val_dataset = CustomAudioDataset(data_dir = self.val_data_dir, transform=self.val_transforms, target_sample_rate = self.target_sample_rate, target_length = self.target_length, n_augmentations=2)
             if self.validation_split is not None:
                 self.train_dataset, self.val_dataset = torch.utils.data.random_split(
